@@ -1,0 +1,139 @@
+name: Frontseat
+description: Install and run Frontseat in a GitHub Actions workflow.
+author: frontseat-dev
+branding:
+  icon: layers
+  color: orange
+
+inputs:
+  mode:
+    description: |
+      Which Frontseat lifecycle command to run.
+      One of: build, ship, lint, test, package, verify, conform, sync.
+      Use empty string to skip command execution and only install Frontseat.
+    required: false
+    default: build
+
+  entities:
+    description: |
+      Entity selector passed to the Frontseat command (e.g. //, //my-svc).
+      Defaults to // which means "all entities".
+    required: false
+    default: //
+
+  version:
+    description: |
+      Frontseat CLI version to install (e.g. 0.1.0, latest).
+      The frontseat-mise plugin resolves this against the GitHub releases of
+      frontseat-dev/frontseat.
+    required: false
+    default: latest
+
+  plugins:
+    description: |
+      Comma-separated plugin names to install alongside the CLI
+      (e.g. "go,maven,docker,helm"). When empty, frontseat-mise installs
+      whichever plugins the workspace's mise.toml declares for
+      "frontseat:frontseat".
+    required: false
+    default: ""
+
+  args:
+    description: Extra arguments appended to the Frontseat command.
+    required: false
+    default: ""
+
+  exec-mode:
+    description: Frontseat --exec-mode (local | remote).
+    required: false
+    default: local
+
+  cache-mode:
+    description: Frontseat --cache-mode (offline | online | auto).
+    required: false
+    default: offline
+
+  cache:
+    description: |
+      Enable REAPI local-cache persistence between runs via actions/cache.
+      Keyed on workspace manifests (go.sum, go.work.sum, pom.xml,
+      package.json, Cargo.lock). Set to "false" to skip.
+    required: false
+    default: "true"
+
+  working-directory:
+    description: Directory containing the workspace (frontseat.yaml lives here).
+    required: false
+    default: "."
+
+  mise-version:
+    description: |
+      Override mise CLI version. Passed through to jdx/mise-action's "version"
+      input. Empty string lets mise-action choose its default.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    # Inject the Frontseat tool entry into mise so this action works in repos
+    # that haven't pinned it themselves. Skipped when the workspace's
+    # mise.toml already declares frontseat:frontseat.
+    - name: Configure frontseat-mise plugin
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        FRONTSEAT_VERSION: ${{ inputs.version }}
+        FRONTSEAT_PLUGINS: ${{ inputs.plugins }}
+      run: |
+        set -euo pipefail
+        if ! grep -q 'frontseat:frontseat' mise.toml 2>/dev/null; then
+          mkdir -p .mise
+          cat > .mise/frontseat.toml <<TOML
+        [plugins]
+        frontseat = "https://github.com/frontseat-dev/frontseat-mise.git"
+
+        [tools]
+        "frontseat:frontseat" = { version = "${FRONTSEAT_VERSION}", plugins = "${FRONTSEAT_PLUGINS}" }
+        TOML
+          # Tell mise to layer .mise/frontseat.toml on top of the workspace's config.
+          export MISE_CONFIG_DIR="${PWD}/.mise"
+          echo "MISE_CONFIG_DIR=${MISE_CONFIG_DIR}" >> "$GITHUB_ENV"
+        fi
+
+    - name: Install mise + tools
+      uses: jdx/mise-action@v2
+      with:
+        version: ${{ inputs.mise-version }}
+        cache: true
+        experimental: true
+        working_directory: ${{ inputs.working-directory }}
+      env:
+        # Frontseat-mise calls the GitHub CLI to discover releases — needs
+        # an authenticated token in CI.
+        GH_TOKEN: ${{ env.GITHUB_TOKEN || env.GH_TOKEN }}
+        GITHUB_TOKEN: ${{ env.GITHUB_TOKEN || env.GH_TOKEN }}
+
+    - name: Restore REAPI cache
+      if: inputs.cache == 'true'
+      uses: actions/cache@v4
+      with:
+        path: |
+          ${{ inputs.working-directory }}/.frontseat/cache
+        key: frontseat-reapi-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('{0}/**/go.sum', inputs.working-directory), format('{0}/**/go.work.sum', inputs.working-directory), format('{0}/**/pom.xml', inputs.working-directory), format('{0}/**/package-lock.json', inputs.working-directory), format('{0}/**/Cargo.lock', inputs.working-directory)) }}
+        restore-keys: |
+          frontseat-reapi-${{ runner.os }}-${{ runner.arch }}-
+
+    - name: Run frontseat ${{ inputs.mode }}
+      if: inputs.mode != ''
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        GH_TOKEN: ${{ env.GITHUB_TOKEN || env.GH_TOKEN }}
+        GITHUB_TOKEN: ${{ env.GITHUB_TOKEN || env.GH_TOKEN }}
+      run: |
+        set -euo pipefail
+        frontseat ${{ inputs.mode }} ${{ inputs.entities }} \
+          --exec-mode ${{ inputs.exec-mode }} \
+          --cache-mode ${{ inputs.cache-mode }} \
+          ${{ inputs.args }}
