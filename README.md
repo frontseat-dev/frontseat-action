@@ -1,87 +1,168 @@
 # frontseat-action
 
-The official GitHub Action for [Frontseat](https://github.com/frontseat-dev/frontseat).
-Installs the Frontseat CLI plus declared plugins, restores the REAPI build cache
-between runs, and drives any lifecycle command (`build`, `ship`, `lint`, `test`,
-`conform`, …) on the workspace.
+GitHub Actions integration for [Frontseat](https://github.com/frontseat-dev/frontseat).
 
-## Quick start
+It ships in two layers. Pick the one that matches how much of the job you want
+to own:
+
+| | Use when |
+|---|---|
+| **Reusable workflow** — `frontseat-dev/frontseat-action/.github/workflows/frontseat.yml@v1` | You want the whole pipeline. Your workflow keeps triggers, concurrency, permissions and the release decision; everything else lives here. |
+| **Composite actions** — `frontseat-dev/frontseat-action@v1` + `…/teardown@v1` | You want Frontseat as steps inside a job you control — a matrix leg, a job that does other work alongside the build. |
+
+Both layers are the same code: the reusable workflow calls the composite
+actions.
+
+## Reusable workflow
+
+```yaml
+name: CI
+on:
+  pull_request:
+    branches: [main, 'release/**']
+  push:
+    branches: [main, 'release/**']
+  workflow_dispatch:
+    inputs:
+      release:
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  ship:
+    uses: frontseat-dev/frontseat-action/.github/workflows/frontseat.yml@v1
+    with:
+      release: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release == 'true' }}
+```
+
+That runs `frontseat verify //...` on every trigger and `frontseat announce //...`
+when `release` is true, on a runner with the toolchain installed, the REAPI grid
+up, the daemon warm, and the grid store restored from and saved back to
+`actions/cache`.
+
+### Inputs
+
+| Name | Default | Description |
+|---|---|---|
+| `release` | `false` | Whether this run cuts a release. Gates the ship command and the GPG import. |
+| `runs-on` | `ubuntu-latest` | Runner label. |
+| `working-directory` | `.` | Directory containing `frontseat.yaml`. |
+| `build-command` | `frontseat verify //...` | Runs on every trigger. |
+| `ship-command` | `frontseat announce //...` | Runs only when `release` is true. |
+| `build-timeout-minutes` | `120` | Bound on the build so a stall fails into the log dump. |
+| `bootstrap-packages` | `""` | Go packages to build from the checkout and put first on `PATH`. |
+| `release-token-env` | `""` | Env var carrying a minted GitHub App token. Set it to enable minting. |
+| `release-app-owner` | `""` | Installation owner for that token. |
+| `release-app-repositories` | `""` | Comma-separated repositories to narrow it to. |
+| `free-disk` | `true` | Reclaim preinstalled toolchains. Turn off on self-hosted runners. |
+| `cache` | `true` | Restore and save the grid store and resolution memos. |
+| `grid` | `true` | Start the embedded REAPI grid. Turn off only for an external `reapi:` endpoint. |
+| `grid-max-size` | `4g` | Size the store is trimmed to before saving. |
+| `mise-plugin-repo` | `frontseat-dev/frontseat-mise` | Repository holding the mise backend plugin. |
+
+### Secrets
+
+All optional. Map them explicitly — this workflow does not use `secrets: inherit`.
+
+| Name | Description |
+|---|---|
+| `MISE_PLUGIN_TOKEN` | Read access to the mise plugin repository. Needed only while it is private and the mise cache is cold. |
+| `GPG_PRIVATE_KEY` | Passphrase-less signing key, imported before ship. |
+| `RELEASE_APP_ID` / `RELEASE_APP_PRIVATE_KEY` | The App that mints `release-token-env`. |
+| `RELEASE_ENV` | Extra credentials for build and ship, as `NAME=VALUE` lines. |
+
+`RELEASE_ENV` is one blob rather than a fixed list of named secrets, because the
+names belong to the calling workspace, not to this workflow:
+
+```yaml
+    secrets:
+      RELEASE_ENV: |
+        MAVEN_CENTRAL_USERNAME=${{ secrets.MAVEN_CENTRAL_USERNAME }}
+        MAVEN_CENTRAL_PASSWORD=${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+```
+
+Each value is registered as a mask before it is exported, then written to
+`$GITHUB_ENV` ahead of the daemon starting, so the daemon and everything it
+spawns inherit it. Values must be single-line; base64-encode a PEM or JSON key
+and decode it in the consuming task.
+
+## Composite actions
 
 ```yaml
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - uses: frontseat-dev/frontseat-action@v1
-        with:
-          mode: build
+
+      - run: frontseat verify //...
+
+      - uses: frontseat-dev/frontseat-action/teardown@v1
+        if: always()
 ```
 
-That single step replaces a manual `curl mise.run | sh` + tool install + REAPI
-cache restoration block — `frontseat build //` runs in the same job, and a
-hashed cache of `.frontseat/cache/` survives across runs.
+Setup takes `working-directory`, `github-token`, `mise-plugin-token`,
+`mise-plugin-repo`, `mise-version`, `free-disk`, `bootstrap-packages`, `cache`,
+`go-module-cache`, `grid`, `grid-timeout-seconds`, `daemon` and
+`daemon-timeout-seconds`. Teardown takes `working-directory`, `cache`,
+`grid-max-size` and `dump-logs`. See each `action.yml` for the details.
 
-## Shipping a release
+**Teardown needs `if: always()`.** Composite actions cannot register a `post:`
+hook, which is why the closing half is a second action rather than something
+setup schedules for you. Saving the grid store on a *failed* run is the point:
+the toolchains and dependency blobs that run fetched are exactly what the retry
+needs to not re-download, and a warm store keeps upstream registries from
+rate-limiting it. A single `actions/cache` step would not do — its post-save is
+skipped when the job fails.
 
-```yaml
-- uses: frontseat-dev/frontseat-action@v1
-  with:
-    mode: ship
-    args: --prerelease alpha
-  env:
-    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-```
+## What the pipeline actually does
 
-`mode: ship` runs the full Frontseat ship lifecycle (`assemble → changelog →
-catalog → sign → deploy → upload → release → prepare → publish → announce`).
-GitHub release creation needs `GITHUB_TOKEN` exposed to the step.
+1. **Free runner disk.** Hosted runners ship ~20GB of toolchains this pipeline
+   never touches, leaving ~14GB — not enough for a grid store plus
+   multi-platform build outputs.
+2. **Install the toolchain via mise**, cached by version. Frontseat treats tool
+   versions as user-owned: they come from your `mise.toml` and nowhere else.
+3. **Restore the caches.** The grid store is the real dependency cache — warm
+   CAS means tools and dependencies never re-download, warm action cache means
+   unchanged actions never re-execute. The Go module download proxy is cached
+   separately because the Go resolver reads it as a `file://` tier ahead of the
+   network; no other language needs a host-side cache, since they provision
+   sandboxes from the grid CAS.
+4. **Start the REAPI grid.** Frontseat is remote-only: every hermetic action
+   executes on a grid. CI uses the embedded no-Docker one, which serves the full
+   REAPI surface in a single process on the runner.
+5. **Start the daemon** and wait for it to report ready, rather than letting the
+   first command start it implicitly — on a cold two-core runner, entity
+   discovery outlasts the CLI's own readiness wait.
+6. **Run build, then ship** if this run is a release.
+7. **Trim and save the store, and dump logs on failure** — the daemon and
+   per-action logs are the only place startup and sandboxed-task errors surface.
 
-## Inputs
+## Cache scope
 
-| Name | Default | Description |
-|---|---|---|
-| `mode` | `build` | Lifecycle command to run (`build`, `ship`, `lint`, `test`, `package`, `verify`, `conform`, `sync`). Empty string installs Frontseat and exits. |
-| `entities` | `//` | Entity selector passed to the command. |
-| `version` | `latest` | Frontseat CLI version. Resolved against the [frontseat releases](https://github.com/frontseat-dev/frontseat/releases) via the `frontseat-mise` plugin. |
-| `plugins` | `""` | Comma-separated plugin names (e.g. `go,maven,docker`). When empty, the action defers to whatever the workspace's `mise.toml` declares. |
-| `args` | `""` | Extra arguments appended to the Frontseat command. |
-| `exec-mode` | `local` | Passed as `--exec-mode`. |
-| `cache-mode` | `offline` | Passed as `--cache-mode`. |
-| `cache` | `"true"` | Enable REAPI local-cache persistence via `actions/cache`. |
-| `working-directory` | `.` | Directory containing `frontseat.yaml`. |
-| `mise-version` | `""` | Override the mise CLI version (passed to `jdx/mise-action`'s `version` input). |
+GitHub shares Actions caches with a pull request only from its base branch, and
+caches saved inside a PR run are invisible to every other PR. A repository that
+only builds on pull requests therefore starts every run with a cold grid store.
+Run the pipeline on pushes to your trunk too; that run's saved store is the one
+every PR restores.
 
-## What it does, in order
+## Versioning
 
-1. **Configures `frontseat-mise`** if your workspace doesn't already declare it.
-   Drops a small `mise.toml` overlay into `.mise/` so this action works in
-   workspaces that haven't pinned Frontseat themselves.
-2. **Installs mise and all declared tools** via [`jdx/mise-action`](https://github.com/jdx/mise-action)
-   with caching enabled. This downloads the Frontseat CLI, every plugin tarball
-   for the runner's OS/arch, and the language toolchains declared in your
-   workspace's `mise.toml`. On a warm cache this is seconds.
-3. **Restores the REAPI cache** from `actions/cache` keyed on the hash of your
-   workspace manifests (`go.sum`, `go.work.sum`, `pom.xml`, `package-lock.json`,
-   `Cargo.lock`). Subsequent runs that don't change dependencies skip
-   already-completed actions.
-4. **Runs the Frontseat command** with the configured `--exec-mode` and
-   `--cache-mode`.
+The reusable workflow and both composite actions ship under one tag and are
+expected to move together — the workflow references the actions at its own major
+tag. Pin to `@v1` for the moving major, or to a commit SHA to freeze.
 
-## Why not just call `frontseat` directly
-
-You can — and for a quick experiment that's the right answer. The action exists
-to encapsulate three things that are tedious to get right by hand:
-
-- **Auth wiring** for `gh` (used by `frontseat-mise` for version discovery)
-  and the GitHub release step in `mode: ship`.
-- **REAPI cache persistence** between ephemeral runner instances. Without it,
-  every `frontseat build` rebuilds everything from scratch.
-- **Plugin installation** through `frontseat-mise`'s `plugins` option, which
-  needs a token configured correctly to talk to the GitHub API.
+The action's contract with Frontseat is the `frontseat grid` and
+`frontseat daemon` command surface. A major bump here means that surface
+changed.
 
 ## License
 
