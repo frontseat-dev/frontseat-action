@@ -1,0 +1,80 @@
+name: Frontseat teardown
+description: >-
+  Trim and save the REAPI grid store, and dump Frontseat logs when the job
+  failed.
+author: frontseat-dev
+branding:
+  icon: layers
+  color: orange
+
+# The closing half of frontseat-dev/frontseat-action. It exists as a separate
+# action because composite actions cannot register a `post:` hook -- only
+# JavaScript and Docker actions can -- and this work has to happen *after* the
+# caller's build and ship steps.
+#
+# Invoke it with `if: always()`. Saving the store on a failed run is the point:
+# the toolchains and dependency blobs that run fetched are exactly what the
+# retry needs to not re-download, which is also why the store uses the
+# restore/save pair rather than a single actions/cache step (whose post-save is
+# skipped when the job fails).
+#
+# Every step below carries its own `if:`. A composite action reached through
+# `if: always()` still evaluates its inner steps against job status, so a bare
+# step would be skipped on exactly the runs this action exists to serve.
+
+inputs:
+  working-directory:
+    description: Directory containing the workspace (frontseat.yaml lives here).
+    required: false
+    default: "."
+
+  cache:
+    description: >-
+      Save the grid store to actions/cache. Must match the `cache` input given
+      to the setup action -- with it off there is no restored store to update.
+    required: false
+    default: "true"
+
+  grid-max-size:
+    description: >-
+      Evict least-recently-used blobs until the store fits, keeping the saved
+      cache inside the repository's actions/cache budget. GitHub evicts whole
+      cache entries at 10GB per repository, so an untrimmed store eventually
+      pushes out every other entry.
+    required: false
+    default: 4g
+
+  dump-logs:
+    description: >-
+      On failure, print the daemon log and the tail of each action log. Without
+      it a red run is a blind 30-second tail: daemon startup and sandboxed task
+      errors surface nowhere else.
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Trim localgrid store
+      if: always() && inputs.cache == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        MAX_SIZE: ${{ inputs.grid-max-size }}
+      run: frontseat grid gc --max-size "$MAX_SIZE" || true
+
+    - name: Save localgrid store
+      if: always() && inputs.cache == 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: ~/.cache/frontseat/localgrid
+        key: frontseat-localgrid-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}
+
+    - name: Dump frontseat logs
+      if: failure() && inputs.dump-logs == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        cat .frontseat-grid.log 2>/dev/null || true
+        cat .frontseat/daemon.log 2>/dev/null || true
+        tail -n 50 .frontseat/logs/*.log 2>/dev/null || true

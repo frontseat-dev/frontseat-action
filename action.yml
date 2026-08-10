@@ -1,139 +1,273 @@
-name: Frontseat
-description: Install and run Frontseat in a GitHub Actions workflow.
+name: Frontseat setup
+description: >-
+  Prepare a runner to execute Frontseat: reclaim disk, install the toolchain via
+  mise, restore the build caches, and bring up the REAPI grid and daemon.
 author: frontseat-dev
 branding:
   icon: layers
   color: orange
 
+# This action is the runner-side half of a Frontseat pipeline. It stops short of
+# running any lifecycle command: `frontseat verify //...` and
+# `frontseat announce //...` stay in the caller's workflow, where their `if:`
+# conditions, timeouts and credentials are visible.
+#
+# Pair it with frontseat-dev/frontseat-action/teardown, which trims and saves
+# the grid store and dumps logs on failure. Composite actions cannot register a
+# `post:` hook, so that half cannot live here -- see teardown/action.yml.
+
 inputs:
-  mode:
-    description: |
-      Which Frontseat lifecycle command to run.
-      One of: build, ship, lint, test, package, verify, conform, sync.
-      Use empty string to skip command execution and only install Frontseat.
-    required: false
-    default: build
-
-  entities:
-    description: |
-      Entity selector passed to the Frontseat command (e.g. //, //my-svc).
-      Defaults to // which means "all entities".
-    required: false
-    default: //
-
-  version:
-    description: |
-      Frontseat CLI version to install (e.g. 0.1.0, latest).
-      The frontseat-mise plugin resolves this against the GitHub releases of
-      frontseat-dev/frontseat.
-    required: false
-    default: latest
-
-  plugins:
-    description: |
-      Comma-separated plugin names to install alongside the CLI
-      (e.g. "go,maven,docker,helm"). When empty, frontseat-mise installs
-      whichever plugins the workspace's mise.toml declares for
-      "frontseat:frontseat".
-    required: false
-    default: ""
-
-  args:
-    description: Extra arguments appended to the Frontseat command.
-    required: false
-    default: ""
-
-  exec-mode:
-    description: Frontseat --exec-mode (local | remote).
-    required: false
-    default: local
-
-  cache-mode:
-    description: Frontseat --cache-mode (offline | online | auto).
-    required: false
-    default: offline
-
-  cache:
-    description: |
-      Enable REAPI local-cache persistence between runs via actions/cache.
-      Keyed on workspace manifests (go.sum, go.work.sum, pom.xml,
-      package.json, Cargo.lock). Set to "false" to skip.
-    required: false
-    default: "true"
-
   working-directory:
     description: Directory containing the workspace (frontseat.yaml lives here).
     required: false
     default: "."
 
-  mise-version:
-    description: |
-      Override mise CLI version. Passed through to jdx/mise-action's "version"
-      input. Empty string lets mise-action choose its default.
+  github-token:
+    description: >-
+      Token for this repository. Reaches mise (frontseat-mise resolves releases
+      through the GitHub API) and the daemon, which shells out to `gh`.
+    required: false
+    default: ${{ github.token }}
+
+  mise-plugin-token:
+    description: >-
+      Token with read access to the frontseat-mise plugin repository. Only
+      needed while that repository is private and the mise cache is cold:
+      `mise install` clones it with mise's own HTTP client, which ignores git's
+      insteadOf rewrite, so the token has to reach mise directly. Falls back to
+      github-token.
     required: false
     default: ""
+
+  mise-plugin-repo:
+    description: >-
+      Repository holding the frontseat mise backend plugin, as owner/name. Used
+      for the git insteadOf rewrite that authenticates the clone.
+    required: false
+    default: frontseat-dev/frontseat-mise
+
+  mise-version:
+    description: >-
+      Pin the mise CLI version. Empty lets jdx/mise-action pick its default.
+    required: false
+    default: ""
+
+  free-disk:
+    description: >-
+      Reclaim the preinstalled toolchains hosted runners ship but this pipeline
+      never touches. A grid store plus multi-platform build outputs does not fit
+      in the ~14GB a stock ubuntu-latest runner leaves free. Set to "false" on
+      self-hosted runners.
+    required: false
+    default: "true"
+
+  bootstrap-packages:
+    description: >-
+      Space-separated Go package paths to build from the checkout and put first
+      on PATH, shadowing the pinned release (plugin discovery scans PATH first).
+      Empty -- the default -- runs the pinned toolchain, which is what proves a
+      released Frontseat can still build the repository. Use it to break a
+      bootstrap deadlock, where a defect in the pinned toolchain can only be
+      fixed by a release the same defect prevents building.
+    required: false
+    default: ""
+
+  cache:
+    description: >-
+      Restore the grid store and Frontseat's resolution memos from
+      actions/cache. The grid store is the real dependency cache: warm CAS means
+      tools and dependencies never re-download, warm action cache means
+      unchanged actions never re-execute.
+    required: false
+    default: "true"
+
+  go-module-cache:
+    description: >-
+      Cache the Go module download proxy. This is the one host-side dependency
+      cache a resolver still reads: the go plugin uses it as a file:// proxy
+      tier ahead of the network. Every other language resolves into throwaway
+      paths and provisions sandboxes from the grid CAS, so host-side
+      maven/npm/cargo caches would be dead weight. Self-disables on workspaces
+      with no go.sum.
+    required: false
+    default: "true"
+
+  grid:
+    description: >-
+      Start the embedded no-Docker REAPI grid (`frontseat grid serve`) and wait
+      for it to answer. Frontseat is remote-only -- every hermetic action
+      executes on a grid -- so leave this on unless frontseat.yaml points at an
+      external `reapi:` endpoint.
+    required: false
+    default: "true"
+
+  grid-timeout-seconds:
+    description: How long to wait for the grid to report ready.
+    required: false
+    default: "15"
+
+  daemon:
+    description: >-
+      Start the Frontseat daemon and wait for it to report ready.
+    required: false
+    default: "true"
+
+  daemon-timeout-seconds:
+    description: >-
+      How long to wait for the daemon to report ready. The daemon front-loads
+      plugin spawning and entity discovery before answering health checks, and
+      on a cold two-core runner that outlasts the CLI's own readiness wait --
+      the spawned daemon keeps initializing after the CLI gives up, so this
+      polls rather than failing the build on a slow start.
+    required: false
+    default: "120"
 
 runs:
   using: composite
   steps:
-    # Inject the Frontseat tool entry into mise so this action works in repos
-    # that haven't pinned it themselves. Skipped when the workspace's
-    # mise.toml already declares frontseat:frontseat.
-    - name: Configure frontseat-mise plugin
+    # Background the slow Android removal so the rest of setup starts
+    # immediately; nothing downstream depends on it having finished.
+    - name: Free runner disk
+      if: inputs.free-disk == 'true'
       shell: bash
-      working-directory: ${{ inputs.working-directory }}
+      run: |
+        sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+          "$AGENT_TOOLSDIRECTORY/CodeQL" &
+        sudo rm -rf /usr/local/lib/android &
+        df -h / | tail -1
+
+    # The default GITHUB_TOKEN is scoped to the calling repository only and
+    # 404s on a different private repository, so a cross-repo token is needed
+    # while frontseat-mise is private and the mise cache is cold. Harmless when
+    # the plugin repository is public or the cache is warm.
+    - name: Authenticate the mise plugin clone
+      shell: bash
       env:
-        FRONTSEAT_VERSION: ${{ inputs.version }}
-        FRONTSEAT_PLUGINS: ${{ inputs.plugins }}
+        TOKEN: ${{ inputs.mise-plugin-token || inputs.github-token }}
+        PLUGIN_REPO: ${{ inputs.mise-plugin-repo }}
       run: |
         set -euo pipefail
-        if ! grep -q 'frontseat:frontseat' mise.toml 2>/dev/null; then
-          mkdir -p .mise
-          cat > .mise/frontseat.toml <<TOML
-        [plugins]
-        frontseat = "https://github.com/frontseat-dev/frontseat-mise.git"
+        [ -n "$TOKEN" ] || exit 0
+        git config --global \
+          "url.https://x-access-token:${TOKEN}@github.com/${PLUGIN_REPO}.insteadOf" \
+          "https://github.com/${PLUGIN_REPO}"
 
-        [tools]
-        "frontseat:frontseat" = { version = "${FRONTSEAT_VERSION}", plugins = "${FRONTSEAT_PLUGINS}" }
-        TOML
-          # Tell mise to layer .mise/frontseat.toml on top of the workspace's config.
-          export MISE_CONFIG_DIR="${PWD}/.mise"
-          echo "MISE_CONFIG_DIR=${MISE_CONFIG_DIR}" >> "$GITHUB_ENV"
-        fi
-
-    - name: Install mise + tools
-      uses: jdx/mise-action@v2
+    # cache: true is the default -- caches the mise install and every resolved
+    # tool by version, so subsequent runs skip re-downloading mise, the language
+    # toolchains, the Frontseat CLI and every plugin tarball.
+    - name: Install mise and the declared toolchain
+      uses: jdx/mise-action@v4
       with:
         version: ${{ inputs.mise-version }}
         cache: true
         experimental: true
         working_directory: ${{ inputs.working-directory }}
+        github_token: ${{ inputs.mise-plugin-token || inputs.github-token }}
       env:
-        # Frontseat-mise calls the GitHub CLI to discover releases — needs
-        # an authenticated token in CI.
-        GH_TOKEN: ${{ env.GITHUB_TOKEN || env.GH_TOKEN }}
-        GITHUB_TOKEN: ${{ env.GITHUB_TOKEN || env.GH_TOKEN }}
+        GH_TOKEN: ${{ inputs.github-token }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        MISE_GITHUB_TOKEN: ${{ inputs.mise-plugin-token || inputs.github-token }}
 
-    - name: Restore REAPI cache
-      if: inputs.cache == 'true'
-      uses: actions/cache@v4
+    - name: Cache Go modules
+      if: inputs.go-module-cache == 'true' && hashFiles('**/go.sum', '**/go.work.sum') != ''
+      uses: actions/cache@v6
       with:
-        path: |
-          ${{ inputs.working-directory }}/.frontseat/cache
-        key: frontseat-reapi-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('{0}/**/go.sum', inputs.working-directory), format('{0}/**/go.work.sum', inputs.working-directory), format('{0}/**/pom.xml', inputs.working-directory), format('{0}/**/package-lock.json', inputs.working-directory), format('{0}/**/Cargo.lock', inputs.working-directory)) }}
+        path: ~/go/pkg/mod/cache/download
+        key: frontseat-go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/go.sum', '**/go.work.sum') }}
         restore-keys: |
-          frontseat-reapi-${{ runner.os }}-${{ runner.arch }}-
+          frontseat-go-${{ runner.os }}-${{ runner.arch }}-
 
-    - name: Run frontseat ${{ inputs.mode }}
-      if: inputs.mode != ''
+    # Bootstrap sits between mise (which provides go) and the grid/daemon, which
+    # discover plugins from PATH at spawn: earlier and go is missing, later and
+    # the shadowing never happens.
+    - name: Bootstrap frontseat from source
+      if: inputs.bootstrap-packages != ''
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
-        GH_TOKEN: ${{ env.GITHUB_TOKEN || env.GH_TOKEN }}
-        GITHUB_TOKEN: ${{ env.GITHUB_TOKEN || env.GH_TOKEN }}
+        PACKAGES: ${{ inputs.bootstrap-packages }}
       run: |
         set -euo pipefail
-        frontseat ${{ inputs.mode }} ${{ inputs.entities }} \
-          --exec-mode ${{ inputs.exec-mode }} \
-          --cache-mode ${{ inputs.cache-mode }} \
-          ${{ inputs.args }}
+        # Unquoted on purpose: the input is a package list, and word splitting
+        # is what turns it into arguments. Passed through the environment
+        # rather than interpolated into the script, so a package path can never
+        # become a shell command.
+        GOBIN=$PWD/bin go install $PACKAGES
+        echo "$PWD/bin" >> "$GITHUB_PATH"
+        "$PWD/bin/frontseat" version
+
+    # Restore and save are split -- save lives in the teardown action -- so the
+    # store survives a failed run: a failed run's fetched toolchains and
+    # dependency blobs are exactly what the retry needs to not re-download, and
+    # a warm store keeps upstream registries from rate-limiting that retry.
+    - name: Restore localgrid store
+      if: inputs.cache == 'true'
+      uses: actions/cache/restore@v6
+      with:
+        path: ~/.cache/frontseat/localgrid
+        key: frontseat-localgrid-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}
+        restore-keys: |
+          frontseat-localgrid-${{ runner.os }}-${{ runner.arch }}-
+
+    # Frontseat's own resolution memos and asset digests: with these warm,
+    # dependency resolution is file reads and asset fetches skip straight to
+    # CAS-presence checks.
+    #
+    # Enumerated entries, NOT the ~/.cache/frontseat parent: the localgrid store
+    # lives under it with its own restore/save pair, and caching the parent
+    # extracts a second (older) copy of the store over the freshly restored one
+    # -- thousands of tar "File exists" errors on the read-only CAS blobs -- and
+    # re-uploads the multi-GB store a second time on save.
+    - name: Cache frontseat resolution
+      if: inputs.cache == 'true'
+      uses: actions/cache@v6
+      with:
+        path: |
+          ${{ inputs.working-directory }}/.frontseat/cache
+          ~/.cache/frontseat/asset-digests.jsonl
+          ~/.cache/frontseat/remote-toolchain
+        key: frontseat-resolve-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/go.sum', '**/pom.xml', 'mise.lock') }}
+        restore-keys: |
+          frontseat-resolve-${{ runner.os }}-${{ runner.arch }}-
+
+    - name: Start the REAPI grid
+      if: inputs.grid == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        TIMEOUT: ${{ inputs.grid-timeout-seconds }}
+      run: |
+        frontseat grid serve > .frontseat-grid.log 2>&1 &
+        for _ in $(seq 1 "$TIMEOUT"); do
+          frontseat grid status && exit 0
+          sleep 1
+        done
+        echo "grid failed to start within ${TIMEOUT}s" >&2
+        cat .frontseat-grid.log >&2 || true
+        exit 1
+
+    # The daemon is started here rather than implicitly by the first command so
+    # that a slow cold start fails with its own log, and so the credentials the
+    # caller exported reach it: build and ship inherit the daemon's environment,
+    # so a credential added only to a later step never reaches an
+    # already-running daemon (or the tools it spawns).
+    - name: Start the frontseat daemon
+      if: inputs.daemon == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        TIMEOUT: ${{ inputs.daemon-timeout-seconds }}
+      run: |
+        frontseat daemon restart || true
+        deadline=$(( SECONDS + TIMEOUT ))
+        while (( SECONDS < deadline )); do
+          frontseat daemon status && exit 0
+          sleep 10
+        done
+        echo "daemon failed to become ready within ${TIMEOUT}s" >&2
+        cat .frontseat/daemon.log >&2 || true
+        exit 1

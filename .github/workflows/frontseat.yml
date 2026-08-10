@@ -1,0 +1,307 @@
+name: Frontseat
+
+# The whole runner-side pipeline as one callable job.
+#
+#   jobs:
+#     ship:
+#       uses: frontseat-dev/frontseat-action/.github/workflows/frontseat.yml@v1
+#       with:
+#         release: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release == 'true' }}
+#
+# The caller keeps what is genuinely its own -- triggers, concurrency,
+# permissions, and the policy decision of whether this run cuts a release --
+# and everything mechanical lives here.
+#
+# `permissions` is deliberately not declared: the job runs with the token the
+# caller granted, so a caller cannot be surprised by this workflow widening its
+# own scope. Callers need `contents: write` to tag and create releases, and
+# `packages: write` to publish.
+#
+# The setup/teardown actions are referenced at the major tag this workflow
+# ships under. `uses:` cannot take an expression, and a `./` path inside a
+# called workflow resolves against the *caller's* checkout rather than this
+# repository -- so the reference is spelled out, and the two move together on
+# every release.
+
+on:
+  workflow_call:
+    inputs:
+      release:
+        description: >-
+          Whether this run cuts a release. The caller decides -- it owns the
+          branching policy -- and passes the result. Gates the ship command and
+          the GPG key import.
+        type: boolean
+        required: false
+        default: false
+
+      runs-on:
+        description: Runner label for the job.
+        type: string
+        required: false
+        default: ubuntu-latest
+
+      working-directory:
+        description: Directory containing the workspace (frontseat.yaml lives here).
+        type: string
+        required: false
+        default: "."
+
+      build-command:
+        description: The build command. Runs on every trigger.
+        type: string
+        required: false
+        default: frontseat verify //...
+
+      ship-command:
+        description: >-
+          The ship command. Runs only when `release` is true. Branch
+          classification happens inside Frontseat -- a stable cut on main or
+          release/*, a preview prerelease anywhere else -- so no prerelease flag
+          belongs here.
+        type: string
+        required: false
+        default: frontseat announce //...
+
+      build-timeout-minutes:
+        description: >-
+          Bound on the build so a stall fails into the log dump instead of
+          eating the six-hour job limit. The grid separately kills individual
+          actions at ten minutes.
+        type: number
+        required: false
+        default: 120
+
+      bootstrap-packages:
+        description: >-
+          Space-separated Go packages to build from the checkout and put first
+          on PATH, shadowing the pinned release. Empty runs the pinned
+          toolchain. See the setup action for when this is worth turning on.
+        type: string
+        required: false
+        default: ""
+
+      release-token-env:
+        description: >-
+          Environment variable carrying the GitHub App installation token. Set
+          it to enable the minting step; the RELEASE_APP_ID and
+          RELEASE_APP_PRIVATE_KEY secrets must then be supplied. Used for
+          credentials the repository-scoped GITHUB_TOKEN cannot cover, such as
+          pushing to a separate tap or bucket repository.
+        type: string
+        required: false
+        default: ""
+
+      release-app-owner:
+        description: Installation owner for the App token. Empty uses the current owner.
+        type: string
+        required: false
+        default: ""
+
+      release-app-repositories:
+        description: >-
+          Comma-separated repositories to narrow the App token to. Empty leaves
+          it scoped to every repository the installation can reach.
+        type: string
+        required: false
+        default: ""
+
+      free-disk:
+        description: Reclaim preinstalled toolchains. Turn off on self-hosted runners.
+        type: boolean
+        required: false
+        default: true
+
+      cache:
+        description: Restore and save the grid store and resolution memos.
+        type: boolean
+        required: false
+        default: true
+
+      grid:
+        description: >-
+          Start the embedded REAPI grid on the runner. Turn off only when
+          frontseat.yaml points at an external `reapi:` endpoint -- an explicit
+          endpoint is a commitment, and Frontseat treats it as unreachable
+          rather than falling back to a different grid.
+        type: boolean
+        required: false
+        default: true
+
+      grid-max-size:
+        description: Size the grid store is trimmed to before being saved.
+        type: string
+        required: false
+        default: 4g
+
+      mise-plugin-repo:
+        description: Repository holding the frontseat mise backend plugin.
+        type: string
+        required: false
+        default: frontseat-dev/frontseat-mise
+
+    secrets:
+      MISE_PLUGIN_TOKEN:
+        description: >-
+          Read access to the frontseat mise plugin repository. Only needed while
+          that repository is private and the mise cache is cold.
+        required: false
+
+      GPG_PRIVATE_KEY:
+        description: >-
+          Passphrase-less signing key, imported into the runner keyring before
+          ship. Needed by publishers that produce detached signatures, such as
+          Maven Central. Imported on release runs only, and consumed by that one
+          step rather than exported to the build environment.
+        required: false
+
+      RELEASE_APP_ID:
+        description: App ID for the release token. Required when release-token-env is set.
+        required: false
+
+      RELEASE_APP_PRIVATE_KEY:
+        description: App private key (PEM). Required when release-token-env is set.
+        required: false
+
+      RELEASE_ENV:
+        description: >-
+          Additional credentials exported to the build and ship environment, as
+          newline-separated NAME=VALUE pairs:
+
+            RELEASE_ENV: |
+              MAVEN_CENTRAL_USERNAME=${{ secrets.MAVEN_CENTRAL_USERNAME }}
+              MAVEN_CENTRAL_PASSWORD=${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+
+          One opaque blob rather than a fixed list of named secrets, because the
+          names are the calling workspace's, not this workflow's. Values must be
+          single-line; a multi-line credential (a PEM, a JSON key file) should be
+          base64-encoded by the caller and decoded by the consuming task.
+        required: false
+
+jobs:
+  frontseat:
+    runs-on: ${{ inputs.runs-on }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history: the release planner reads commit messages back to the
+          # most recent reachable tag to pick the next version. Note this
+          # deliberately checks out the triggering ref -- for a pull request
+          # that is the merge result, which is what should be validated.
+          fetch-depth: 0
+
+      # Maven Central and friends require detached GPG signatures, produced by
+      # shelling out to gpg on this runner, so the key must be in the keyring
+      # before ship runs. A passphrase-less key needs no MAVEN_GPG_PASSPHRASE
+      # for loopback signing.
+      - name: Import GPG signing key
+        if: inputs.release
+        shell: bash
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          [ -n "${GPG_PRIVATE_KEY:-}" ] || exit 0
+          printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --import
+
+      # Minted per run rather than stored: installation tokens expire after an
+      # hour, and the pull requests they open are bot-authored, so any human --
+      # including the credential's owner -- can approve them. A PAT's owner
+      # cannot approve their own.
+      - name: Mint release app token
+        id: release_app_token
+        if: inputs.release-token-env != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ inputs.release-app-owner }}
+          repositories: ${{ inputs.release-app-repositories }}
+
+      # Exported through $GITHUB_ENV, before setup, so the daemon inherits them
+      # at spawn. Build and ship inherit the daemon's environment, so a
+      # credential that only reaches a later step never reaches the
+      # already-running daemon or the tools it spawns.
+      - name: Export release credentials
+        shell: bash
+        env:
+          RELEASE_ENV: ${{ secrets.RELEASE_ENV }}
+          TOKEN_ENV_NAME: ${{ inputs.release-token-env }}
+          TOKEN_ENV_VALUE: ${{ steps.release_app_token.outputs.token }}
+        run: |
+          set -euo pipefail
+
+          # GitHub masks each secret it knows about, but RELEASE_ENV arrives as
+          # one blob -- the individual values inside it are not registered, so
+          # they are masked here before anything can echo one.
+          emit() {
+            local name=$1 value=$2 delim
+            case "$name" in
+              [A-Za-z_]*) ;;
+              *) echo "ignoring credential with invalid name: $name" >&2; return 0 ;;
+            esac
+            case "$name" in
+              *[!A-Za-z0-9_]*) echo "ignoring credential with invalid name: $name" >&2; return 0 ;;
+            esac
+            [ -n "$value" ] || return 0
+            echo "::add-mask::$value"
+            # Randomized delimiter: a value containing the terminator would
+            # otherwise let one credential inject another into $GITHUB_ENV.
+            delim="__FRONTSEAT_ENV_${RANDOM}${RANDOM}${RANDOM}__"
+            printf '%s<<%s\n%s\n%s\n' "$name" "$delim" "$value" "$delim" >> "$GITHUB_ENV"
+          }
+
+          if [ -n "${TOKEN_ENV_NAME:-}" ]; then
+            emit "$TOKEN_ENV_NAME" "${TOKEN_ENV_VALUE:-}"
+          fi
+
+          while IFS= read -r line; do
+            case "$line" in
+              ''|'#'*) continue ;;
+              *=*) emit "${line%%=*}" "${line#*=}" ;;
+              *) echo "ignoring malformed RELEASE_ENV line (want NAME=VALUE)" >&2 ;;
+            esac
+          done <<< "${RELEASE_ENV:-}"
+
+      - uses: frontseat-dev/frontseat-action@v1
+        with:
+          working-directory: ${{ inputs.working-directory }}
+          github-token: ${{ github.token }}
+          mise-plugin-token: ${{ secrets.MISE_PLUGIN_TOKEN }}
+          mise-plugin-repo: ${{ inputs.mise-plugin-repo }}
+          free-disk: ${{ inputs.free-disk }}
+          cache: ${{ inputs.cache }}
+          grid: ${{ inputs.grid }}
+          bootstrap-packages: ${{ inputs.bootstrap-packages }}
+
+      # build-command and ship-command are interpolated as script, because that
+      # is what they are. They come from the caller's workflow file, which is
+      # the same trust boundary as the rest of that file -- do not wire either
+      # to anything a pull request author can set.
+      - name: build
+        timeout-minutes: ${{ inputs.build-timeout-minutes }}
+        working-directory: ${{ inputs.working-directory }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ${{ inputs.build-command }}
+
+      - name: ship
+        if: inputs.release
+        working-directory: ${{ inputs.working-directory }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          ${{ inputs.ship-command }}
+
+      - uses: frontseat-dev/frontseat-action/teardown@v1
+        if: always()
+        with:
+          working-directory: ${{ inputs.working-directory }}
+          cache: ${{ inputs.cache }}
+          grid-max-size: ${{ inputs.grid-max-size }}
