@@ -200,12 +200,19 @@ runs:
     # store survives a failed run: a failed run's fetched toolchains and
     # dependency blobs are exactly what the retry needs to not re-download, and
     # a warm store keeps upstream registries from rate-limiting that retry.
+    #
+    # run_attempt is in the key, not just run_id: a rerun keeps run_id, so the
+    # save step would collide with the entry the previous attempt wrote and
+    # warn "Cache already exists" instead of saving -- meaning a rerun never
+    # updates the store it just spent a build warming. Per-attempt keys make
+    # every save a fresh entry; the rerun still starts warm via the
+    # restore-keys prefix below.
     - name: Restore localgrid store
       if: inputs.cache == 'true'
       uses: actions/cache/restore@v6
       with:
         path: ~/.cache/frontseat/localgrid
-        key: frontseat-localgrid-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}
+        key: frontseat-localgrid-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
         restore-keys: |
           frontseat-localgrid-${{ runner.os }}-${{ runner.arch }}-
 
@@ -224,11 +231,32 @@ runs:
       with:
         path: |
           ${{ inputs.working-directory }}/.frontseat/cache
-          ~/.cache/frontseat/asset-digests.jsonl
           ~/.cache/frontseat/remote-toolchain
         key: frontseat-resolve-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/go.sum', '**/pom.xml', 'mise.lock') }}
         restore-keys: |
           frontseat-resolve-${{ runner.os }}-${{ runner.arch }}-
+
+    # The asset-digest memo gets its OWN split restore/save, and is
+    # deliberately not in the content-keyed cache above. It is the one cached
+    # file the build can discover to be WRONG at runtime: an asset whose
+    # upstream content is mutable (maven-metadata*.xml) drifts, the input tree
+    # references the digest we memoized, and materialization correctly refuses
+    # the mismatch. The runner self-heals by re-memoizing the live digest --
+    # but under a combined actions/cache keyed on hashFiles(...), an upstream
+    # publish changes none of those files, so the run is an exact key hit and
+    # the action skips its post-job save. The correction was written on the
+    # runner and thrown away, every later run restored the same poisoned
+    # entry, and only deleting the cache entry by hand broke the loop. A
+    # per-run, per-attempt key always misses, so the healed memo is always
+    # saved; the prefix below still starts each run warm.
+    - name: Restore asset-digest memo
+      if: inputs.cache == 'true'
+      uses: actions/cache/restore@v6
+      with:
+        path: ~/.cache/frontseat/asset-digests.jsonl
+        key: frontseat-assetmemo-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: |
+          frontseat-assetmemo-${{ runner.os }}-${{ runner.arch }}-
 
     - name: Start the REAPI grid
       if: inputs.grid == 'true'
