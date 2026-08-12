@@ -1,0 +1,62 @@
+name: Lint
+
+# This repository's product IS workflow YAML, and a defect in it does not
+# surface here -- it surfaces as "invalid workflow file" in whatever repository
+# calls the pipeline, where the error names the caller rather than the cause.
+# These checks are cheap and catch the failures that are otherwise expensive to
+# trace back.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Validate action and workflow YAML
+        run: |
+          python3 - <<'PY'
+          import sys, yaml
+
+          FILES = ['.github/workflows/frontseat.yml', 'action.yml', 'teardown/action.yml']
+          errors = []
+
+          for path in FILES:
+              try:
+                  doc = yaml.safe_load(open(path))
+              except Exception as e:
+                  errors.append(f'{path}: does not parse as YAML: {e}')
+                  continue
+
+              # `on:` parses as the boolean True under YAML 1.1.
+              call = (doc.get(True) or {}).get('workflow_call') if True in doc else None
+              groups = (
+                  {'inputs': call.get('inputs'), 'secrets': call.get('secrets')}
+                  if call else {'inputs': doc.get('inputs')}
+              )
+
+              for group, items in groups.items():
+                  for name, spec in (items or {}).items():
+                      desc = (spec or {}).get('description') or ''
+                      # An expression in a description is evaluated by GitHub
+                      # against a context list that excludes secrets, so a
+                      # literal example makes the whole file unparseable and
+                      # every caller fails to start with zero jobs.
+                      if '${{' in desc:
+                          errors.append(
+                              f'{path}: {group}.{name} description contains a '
+                              f'${{{{ }}}} expression; move the example to the README'
+                          )
+
+          if errors:
+              print('\n'.join(errors))
+              sys.exit(1)
+          print(f'{len(FILES)} files OK')
+          PY

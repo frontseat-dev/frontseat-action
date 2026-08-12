@@ -166,11 +166,12 @@ on:
       RELEASE_ENV:
         description: >-
           Additional credentials exported to the build and ship environment, as
-          newline-separated NAME=VALUE pairs:
-
-            RELEASE_ENV: |
-              MAVEN_CENTRAL_USERNAME=${{ secrets.MAVEN_CENTRAL_USERNAME }}
-              MAVEN_CENTRAL_PASSWORD=${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          newline-separated NAME=VALUE pairs, each value supplied by the caller
+          as a secrets expression. The README carries a worked example; it
+          cannot be written here, because GitHub evaluates any expression it
+          finds in a description and the secrets context is not available in
+          one -- an example spelled out literally makes this whole workflow
+          unparseable, and every caller of it fails to start.
 
           One opaque blob rather than a fixed list of named secrets, because the
           names are the calling workspace's, not this workflow's. Values must be
