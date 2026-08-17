@@ -164,8 +164,15 @@ runs:
         working_directory: ${{ inputs.working-directory }}
         github_token: ${{ inputs.mise-plugin-token || inputs.github-token }}
       env:
-        GH_TOKEN: ${{ inputs.github-token }}
-        GITHUB_TOKEN: ${{ inputs.github-token }}
+        # The frontseat mise backend installs tools by shelling out to `gh
+        # release download --repo frontseat-dev/frontseat`, and `gh` reads
+        # GH_TOKEN then GITHUB_TOKEN. The release stream lives in a *different*
+        # private repo than the caller, so the default job token 404s it
+        # ("Could not resolve to a Repository"). Both must carry the cross-repo
+        # token, not just MISE_GITHUB_TOKEN (which only the mise-native github
+        # backend consumes). Falls back to the job token when unset.
+        GH_TOKEN: ${{ inputs.mise-plugin-token || inputs.github-token }}
+        GITHUB_TOKEN: ${{ inputs.mise-plugin-token || inputs.github-token }}
         MISE_GITHUB_TOKEN: ${{ inputs.mise-plugin-token || inputs.github-token }}
 
     - name: Cache Go modules
