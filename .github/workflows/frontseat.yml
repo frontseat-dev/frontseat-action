@@ -106,6 +106,15 @@ on:
         required: false
         default: ""
 
+      mise-version:
+        description: >-
+          Pin the mise CLI version. Empty uses the setup action's default,
+          which tracks the frontseat workspace's mise baseline — see the
+          mise-version input on the action itself.
+        type: string
+        required: false
+        default: ""
+
       free-disk:
         description: Reclaim preinstalled toolchains. Turn off on self-hosted runners.
         type: boolean
@@ -270,6 +279,7 @@ jobs:
           github-token: ${{ github.token }}
           mise-plugin-token: ${{ secrets.MISE_PLUGIN_TOKEN }}
           mise-plugin-repo: ${{ inputs.mise-plugin-repo }}
+          mise-version: ${{ inputs.mise-version }}
           free-disk: ${{ inputs.free-disk }}
           cache: ${{ inputs.cache }}
           grid: ${{ inputs.grid }}

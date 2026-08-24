@@ -48,9 +48,13 @@ inputs:
 
   mise-version:
     description: >-
-      Pin the mise CLI version. Empty lets jdx/mise-action pick its default.
+      Pin the mise CLI version. The default tracks the frontseat workspace's
+      own mise baseline (mise.toml min_version, frontseat GH-475): mise is a
+      build input — frontseat stages its binary into every remote action's
+      input tree — so an unpinned CI mise partitions the cache against every
+      pinned dev machine. Bump this default together with that baseline.
     required: false
-    default: ""
+    default: "2026.8.12"
 
   free-disk:
     description: >-
