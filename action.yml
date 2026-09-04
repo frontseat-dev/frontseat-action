@@ -138,6 +138,16 @@ runs:
         sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
           "$AGENT_TOOLSDIRECTORY/CodeQL" &
         sudo rm -rf /usr/local/lib/android &
+        # The full hosted toolcache (~10 GB of preinstalled Node/Go/Python)
+        # goes too: mise provisions the project's real toolchain, so nothing
+        # here is consumed. Added when a cold release build ENOSPC'd a stock
+        # runner even after the reclaim above (frontseat GH-614 era): the CAS
+        # working set — a GOCACHE fragment per module across 40+ modules,
+        # toolchains-via-CAS, double-build churn, ship archives — outgrew
+        # what the standard set frees.
+        sudo rm -rf /opt/hostedtoolcache &
+        sudo docker image prune --all --force >/dev/null 2>&1 &
+        sudo swapoff -a 2>/dev/null; sudo rm -f /mnt/swapfile &
         df -h / | tail -1
 
     # The default GITHUB_TOKEN is scoped to the calling repository only and
