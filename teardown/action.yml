@@ -107,5 +107,7 @@ runs:
         df -h 2>/dev/null || true
         echo "== top directories =="
         sudo du -x -BM -d3 / 2>/dev/null | sort -rn | head -40 || true
+        echo "== tmp =="
+        sudo du -x -BM -d2 /tmp 2>/dev/null | sort -rn | head -15 || true
         echo "== frontseat cache =="
         sudo du -x -BM -d2 "$HOME/.cache/frontseat/" /mnt/frontseat-cache/ 2>/dev/null | sort -rn | head -20 || true

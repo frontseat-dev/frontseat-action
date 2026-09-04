@@ -146,6 +146,12 @@ runs:
         # toolchains-via-CAS, double-build churn, ship archives — outgrew
         # what the standard set frees.
         sudo rm -rf /opt/hostedtoolcache &
+        # Second tier, from the GH-617 disk survey: swift, the JVMs, and the
+        # /usr/local extras were still aboard while the disk sat at 99%.
+        sudo rm -rf /usr/share/swift /usr/lib/jvm /usr/share/miniconda \
+          /usr/local/julia* /usr/local/aws-cli /usr/local/aws-sam-cli \
+          /usr/local/share/powershell /usr/local/share/chromium \
+          /usr/local/lib/node_modules &
         sudo docker image prune --all --force >/dev/null 2>&1 &
         sudo swapoff -a 2>/dev/null; sudo rm -f /mnt/swapfile &
         # The grid store lives on the runner's SECOND disk (/mnt, ~65 GB on
