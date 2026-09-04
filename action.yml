@@ -148,7 +148,17 @@ runs:
         sudo rm -rf /opt/hostedtoolcache &
         sudo docker image prune --all --force >/dev/null 2>&1 &
         sudo swapoff -a 2>/dev/null; sudo rm -f /mnt/swapfile &
-        df -h / | tail -1
+        # The grid store lives on the runner's SECOND disk (/mnt, ~65 GB on
+        # stock ubuntu runners): a cold build's store working set — CAS, the
+        # per-action exec staging, subtree accelerators — exceeded the root
+        # disk even after every reclaim above. Foreground: the cache restore
+        # and grid start below must see the symlink.
+        sudo mkdir -p /mnt/frontseat-cache
+        sudo chown "$(id -u):$(id -g)" /mnt/frontseat-cache
+        mkdir -p "$HOME/.cache"
+        rm -rf "$HOME/.cache/frontseat"
+        ln -sfn /mnt/frontseat-cache "$HOME/.cache/frontseat"
+        df -h / /mnt 2>/dev/null | tail -2
 
     # The default GITHUB_TOKEN is scoped to the calling repository only and
     # 404s on a different private repository, so a cross-repo token is needed
