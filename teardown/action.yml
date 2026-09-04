@@ -91,3 +91,17 @@ runs:
         cat .frontseat-grid.log 2>/dev/null || true
         cat .frontseat/daemon.log 2>/dev/null || true
         tail -n 50 .frontseat/logs/*.log 2>/dev/null || true
+
+    # Cold builds have ENOSPC'd stock runners with ~35 GB unaccounted for
+    # (frontseat GH-617); this survey turns the next red run into the answer
+    # instead of another 35-minute guess.
+    - name: Survey disk usage
+      if: failure()
+      shell: bash
+      run: |
+        echo "== df =="
+        df -h 2>/dev/null || true
+        echo "== top directories =="
+        sudo du -x -BM -d3 / 2>/dev/null | sort -rn | head -40 || true
+        echo "== frontseat cache =="
+        sudo du -x -BM -d2 "$HOME/.cache/frontseat/" /mnt/frontseat-cache/ 2>/dev/null | sort -rn | head -20 || true
