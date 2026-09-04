@@ -96,7 +96,11 @@ runs:
     # (frontseat GH-617); this survey turns the next red run into the answer
     # instead of another 35-minute guess.
     - name: Survey disk usage
-      if: failure()
+      # if: failure() self-skipped here: inside a composite action the status
+      # functions reflect the COMPOSITE's own prior steps, not the job — the
+      # header comment above overstates what always() propagation does for
+      # them. Unconditional while GH-617 is open; ~a minute per run.
+      if: always()
       shell: bash
       run: |
         echo "== df =="
