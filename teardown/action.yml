@@ -83,6 +83,26 @@ runs:
         path: ~/.cache/frontseat/asset-digests.jsonl
         key: frontseat-assetmemo-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
 
+    # Counterpart of the setup's toolchain restore: composite actions have no
+    # post: hook, so the save lives here. Key recomputed identically from the
+    # filtered config; saving over an existing key is a harmless warning.
+    - name: Save the toolchain cache
+      if: always()
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        key=$(grep -hvE '^\s*"?frontseat:' mise.toml mise.lock 2>/dev/null | sha256sum | cut -c1-16)
+        echo "FRONTSEAT_MISE_KEY=frontseat-mise-v2-${{ runner.os }}-${{ runner.arch }}-$key" >> "$GITHUB_ENV"
+
+    - name: Save the toolchain cache (upload)
+      if: always()
+      uses: actions/cache/save@v6
+      with:
+        path: |
+          ~/.local/share/mise
+          !~/.local/share/mise/installs/frontseat-*
+        key: ${{ env.FRONTSEAT_MISE_KEY }}
+
     - name: Dump frontseat logs
       # failure() self-skips in composites (see the survey step); job-status
       # gating is the caller-side if:. Logs on success are cheap and useful.
