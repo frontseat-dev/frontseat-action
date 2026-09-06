@@ -83,11 +83,62 @@ runs:
         path: ~/.cache/frontseat/asset-digests.jsonl
         key: frontseat-assetmemo-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
 
+    # Counterpart of the setup's toolchain restore: composite actions have no
+    # post: hook, so the save lives here. Key recomputed identically from the
+    # filtered config; saving over an existing key is a harmless warning.
+    - name: Save the toolchain cache
+      if: always()
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        key=$(grep -hvE '^\s*"?frontseat:' mise.toml mise.lock 2>/dev/null | sha256sum | cut -c1-16)
+        echo "FRONTSEAT_MISE_KEY=frontseat-mise-v2-${{ runner.os }}-${{ runner.arch }}-$key" >> "$GITHUB_ENV"
+
+    - name: Save the toolchain cache (upload)
+      if: always()
+      uses: actions/cache/save@v6
+      with:
+        path: |
+          ~/.local/share/mise
+          !~/.local/share/mise/installs/frontseat-*
+        key: ${{ env.FRONTSEAT_MISE_KEY }}
+
+    - name: Save the JetBrains SDK cache
+      if: always()
+      uses: actions/cache/save@v6
+      with:
+        path: |
+          ~/.cache/frontseat/jetbrains-sdk
+          ~/.cache/frontseat/jetbrains-resolve
+        key: frontseat-jbsdk-v1-${{ runner.os }}-${{ hashFiles('**/frontseat-ide-intellij/*.gradle*', '**/frontseat-ide-intellij/gradle.properties') }}
+
     - name: Dump frontseat logs
-      if: failure() && inputs.dump-logs == 'true'
+      # failure() self-skips in composites (see the survey step); job-status
+      # gating is the caller-side if:. Logs on success are cheap and useful.
+      if: always() && inputs.dump-logs == 'true'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       run: |
         cat .frontseat-grid.log 2>/dev/null || true
         cat .frontseat/daemon.log 2>/dev/null || true
         tail -n 50 .frontseat/logs/*.log 2>/dev/null || true
+
+    # Cold builds have ENOSPC'd stock runners with ~35 GB unaccounted for
+    # (frontseat GH-617); this survey turns the next red run into the answer
+    # instead of another 35-minute guess.
+    - name: Survey disk usage
+      # if: failure() self-skipped here: inside a composite action the status
+      # functions reflect the COMPOSITE's own prior steps, not the job — the
+      # header comment above overstates what always() propagation does for
+      # them. Unconditional while GH-617 is open; ~a minute per run.
+      if: always()
+      shell: bash
+      run: |
+        echo "== df =="
+        df -h 2>/dev/null || true
+        echo "== top directories =="
+        sudo du -x -BM -d3 / 2>/dev/null | sort -rn | head -40 || true
+        echo "== tmp =="
+        sudo du -x -BM -d2 /tmp 2>/dev/null | sort -rn | head -15 || true
+        echo "== frontseat cache =="
+        sudo du -x -BM -d2 "$HOME/.cache/frontseat/" /mnt/frontseat-cache/ 2>/dev/null | sort -rn | head -20 || true
