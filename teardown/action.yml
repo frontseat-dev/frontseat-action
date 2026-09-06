@@ -103,6 +103,15 @@ runs:
           !~/.local/share/mise/installs/frontseat-*
         key: ${{ env.FRONTSEAT_MISE_KEY }}
 
+    - name: Save the JetBrains SDK cache
+      if: always()
+      uses: actions/cache/save@v6
+      with:
+        path: |
+          ~/.cache/frontseat/jetbrains-sdk
+          ~/.cache/frontseat/jetbrains-resolve
+        key: frontseat-jbsdk-v1-${{ runner.os }}-${{ hashFiles('**/frontseat-ide-intellij/*.gradle*', '**/frontseat-ide-intellij/gradle.properties') }}
+
     - name: Dump frontseat logs
       # failure() self-skips in composites (see the survey step); job-status
       # gating is the caller-side if:. Logs on success are cheap and useful.

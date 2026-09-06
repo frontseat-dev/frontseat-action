@@ -208,6 +208,19 @@ runs:
           !~/.local/share/mise/installs/frontseat-*
         key: ${{ env.FRONTSEAT_MISE_KEY }}
 
+    # The IntelliJ plugin build needs the ~2 GB IDE SDK plus its Gradle
+    # platform set; uncached, that single action runs 5-15 minutes per CI
+    # run. Both live in version-keyed persistent caches on dev machines —
+    # this is the CI equivalent, keyed on the plugin's gradle config so an
+    # SDK bump re-keys and anything else keeps the cache.
+    - name: Restore the JetBrains SDK cache
+      uses: actions/cache/restore@v6
+      with:
+        path: |
+          ~/.cache/frontseat/jetbrains-sdk
+          ~/.cache/frontseat/jetbrains-resolve
+        key: frontseat-jbsdk-v1-${{ runner.os }}-${{ hashFiles('**/frontseat-ide-intellij/*.gradle*', '**/frontseat-ide-intellij/gradle.properties') }}
+
     - name: Install mise and the declared toolchain
       uses: jdx/mise-action@v4
       with:
