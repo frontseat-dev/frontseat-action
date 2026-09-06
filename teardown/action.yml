@@ -84,7 +84,9 @@ runs:
         key: frontseat-assetmemo-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
 
     - name: Dump frontseat logs
-      if: failure() && inputs.dump-logs == 'true'
+      # failure() self-skips in composites (see the survey step); job-status
+      # gating is the caller-side if:. Logs on success are cheap and useful.
+      if: always() && inputs.dump-logs == 'true'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       run: |
