@@ -4,34 +4,40 @@ Readies a GitHub-hosted runner to run [frontseat](https://github.com/frontseat-d
 
 You do not write the workflow that uses it. frontseat's github plugin renders
 `.github/workflows/frontseat.yml` from `frontseat.yaml`, and `frontseat
-generate --fix` keeps it in step:
+generate --fix` keeps it in step. The workflow keeps the triggers and the
+decision whether a run releases; the action does the rest:
 
 ```yaml
 steps:
-  - uses: actions/checkout@v4
-    with:
-      fetch-depth: 0
   - uses: frontseat-dev/frontseat-action@v1
-  - run: mise exec -- frontseat verify --plain
+    with:
+      release: ${{ github.event_name == 'workflow_dispatch' && inputs.release }}
 ```
 
-frontseat runs on the grid `frontseat.yaml` names, and the action readies
-the runner for that grid. It:
+frontseat runs on the grid `frontseat.yaml` names, any REAPI grid, and the
+action readies the runner for it. What the runner needs to reach that grid,
+a VPN client for one, is the repository's own: the github plugin's `setup`
+steps run before the action. The action:
 
-1. reads `grid.address` from `frontseat.yaml`;
-2. without one, frees disk, since the embedded grid then runs on the runner
+1. checks the repository out with its history and tags;
+2. reads `grid.address` from `frontseat.yaml`;
+3. without one, frees disk, since the embedded grid then runs on the runner
    and will not start an action with less than 8 GiB free;
-3. installs bubblewrap and allows the user namespaces it needs: the embedded
+4. installs bubblewrap and allows the user namespaces it needs: the embedded
    grid confines every action, and effects such as publishes run on an
    embedded grid of their own even when a remote grid builds;
-4. installs the repository's mise toolchain, frontseat included;
-5. restores the workspace's memos and, without a named grid, the embedded
-   grid's store, and saves them after the job.
+5. installs the repository's mise toolchain, frontseat included;
+6. restores the workspace's memos and, without a named grid, the embedded
+   grid's store, and saves them after the job;
+7. runs `frontseat verify`, then `frontseat publish` when `release` is
+   `true`.
 
 ## Inputs
 
 | name | default | |
 |---|---|---|
+| `release` | `false` | Publish after verifying. |
+| `github-token` | the job's token | The token a publish uses for the forge. |
 | `working-directory` | `.` | Directory holding `frontseat.yaml` and `mise.toml`. |
 | `free-disk` | `true` | Remove preinstalled toolchains frontseat never uses, when the grid is the embedded one. Turn it off on a self-hosted runner. |
 | `cache` | `true` | Restore and save the memos, and the embedded grid's store. |

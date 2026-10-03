@@ -1,16 +1,16 @@
 name: Frontseat
 description: >-
-  Ready a GitHub-hosted runner to run frontseat: disk for the embedded grid,
-  bubblewrap to confine its actions, the repository's mise toolchain, and the
-  grid store and memos from the cache.
+  Run frontseat on a GitHub-hosted runner: check the repository out, ready the
+  runner for the grid frontseat.yaml names, verify, and publish when the
+  workflow says this run releases.
 author: frontseat-dev
 branding:
   icon: layers
   color: orange
 
 # The workflow that calls this is generated: frontseat's github plugin renders
-# it from frontseat.yaml and runs `mise exec -- frontseat verify` after this
-# step. This action only readies the runner; it runs no frontseat command.
+# it from frontseat.yaml and keeps what is the workspace's own, the triggers
+# and whether a run releases. Everything else happens here.
 #
 # frontseat runs on the grid frontseat.yaml names. Without one it runs the
 # embedded grid on the runner, which needs the disk and keeps the store this
@@ -19,6 +19,14 @@ branding:
 # sandbox is readied either way.
 
 inputs:
+  release:
+    description: Whether this run publishes after it verifies.
+    required: false
+    default: "false"
+  github-token:
+    description: The token a publish uses for the forge.
+    required: false
+    default: ${{ github.token }}
   working-directory:
     description: Directory holding frontseat.yaml and mise.toml.
     required: false
@@ -41,6 +49,12 @@ inputs:
 runs:
   using: composite
   steps:
+    # The tags and history a release reads come with the checkout.
+    - name: Check out
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
     - name: Read the grid
       id: grid
       shell: bash
@@ -97,3 +111,16 @@ runs:
           ${{ inputs.working-directory }}/.frontseat/fingerprints
         key: frontseat-memo-${{ runner.os }}-${{ runner.arch }}-${{ steps.grid.outputs.address }}-${{ github.sha }}
         restore-keys: frontseat-memo-${{ runner.os }}-${{ runner.arch }}-${{ steps.grid.outputs.address }}-
+
+    - name: Verify
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: mise exec -- frontseat verify --plain
+
+    - name: Publish
+      if: inputs.release == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: mise exec -- frontseat publish --plain
