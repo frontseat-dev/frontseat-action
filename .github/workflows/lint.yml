@@ -25,7 +25,7 @@ jobs:
           python3 - <<'PY'
           import sys, yaml
 
-          FILES = ['.github/workflows/frontseat.yml', 'action.yml', 'teardown/action.yml']
+          FILES = ['action.yml']
           errors = []
 
           for path in FILES:
