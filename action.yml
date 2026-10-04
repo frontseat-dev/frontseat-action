@@ -121,9 +121,13 @@ runs:
         key: frontseat-memo-${{ runner.os }}-${{ runner.arch }}-${{ steps.grid.outputs.address }}-${{ github.sha }}
         restore-keys: frontseat-memo-${{ runner.os }}-${{ runner.arch }}-${{ steps.grid.outputs.address }}-
 
+    # frontseat fetches the plugins frontseat.lock pins from their
+    # releases, which for a private repository needs the token.
     - name: Verify
       shell: bash
       working-directory: ${{ inputs.working-directory }}
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
       run: mise exec -- frontseat verify --plain
 
     - name: Publish
