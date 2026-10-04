@@ -24,7 +24,9 @@ inputs:
     required: false
     default: "false"
   github-token:
-    description: The token a publish uses for the forge.
+    description: >-
+      The token tools are installed with from GitHub releases, and a publish
+      uses for the forge.
     required: false
     default: ${{ github.token }}
   working-directory:
@@ -92,6 +94,13 @@ runs:
       uses: jdx/mise-action@v2
       with:
         working_directory: ${{ inputs.working-directory }}
+        github_token: ${{ inputs.github-token }}
+      # A tool pinned from GitHub releases, frontseat's own among them, is
+      # fetched with the job's token: a private repository's releases need
+      # it, and a public one's are not rate-limited with it.
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
 
     - name: Restore the embedded grid's store
       if: inputs.cache == 'true' && steps.grid.outputs.address == ''
