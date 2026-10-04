@@ -37,7 +37,7 @@ steps run before the action. The action:
 | name | default | |
 |---|---|---|
 | `release` | `false` | Publish after verifying. |
-| `github-token` | the job's token | The token a publish uses for the forge. |
+| `github-token` | the job's token | The token tools are installed with from GitHub releases, and a publish uses for the forge. |
 | `working-directory` | `.` | Directory holding `frontseat.yaml` and `mise.toml`. |
 | `free-disk` | `true` | Remove preinstalled toolchains frontseat never uses, when the grid is the embedded one. Turn it off on a self-hosted runner. |
 | `cache` | `true` | Restore and save the memos, and the embedded grid's store. |
