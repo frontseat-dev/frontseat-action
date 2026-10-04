@@ -43,8 +43,9 @@ inputs:
     default: "true"
   cache:
     description: >-
-      Restore and save the workspace's memos, and the embedded grid's store
-      when frontseat.yaml names no grid.
+      Restore and save the workspace's memos, frontseat's plugins and their
+      compiled wasm, and the embedded grid's store when frontseat.yaml names
+      no grid.
     required: false
     default: "true"
 
@@ -120,6 +121,20 @@ runs:
           ${{ inputs.working-directory }}/.frontseat/fingerprints
         key: frontseat-memo-${{ runner.os }}-${{ runner.arch }}-${{ steps.grid.outputs.address }}-${{ github.sha }}
         restore-keys: frontseat-memo-${{ runner.os }}-${{ runner.arch }}-${{ steps.grid.outputs.address }}-
+
+    # The plugins frontseat.lock pins and their compiled wasm, by the lock
+    # and the frontseat mise.toml pins. A plugin is loaded only when its
+    # sha256 is the lock's, so a restored one is never trusted unread. No
+    # fallback key: the compiled wasm is never pruned, and a cache carried
+    # from pin to pin would only grow.
+    - name: Restore frontseat's plugins
+      if: inputs.cache == 'true'
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/frontseat/plugins
+          ~/.cache/frontseat/wasm
+        key: frontseat-plugins-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('{0}/frontseat.lock', inputs.working-directory), format('{0}/mise.toml', inputs.working-directory)) }}
 
     # frontseat fetches the plugins frontseat.lock pins from their
     # releases, which for a private repository needs the token.
