@@ -104,8 +104,9 @@ runs:
         GITHUB_TOKEN: ${{ inputs.github-token }}
 
     - name: Restore the embedded grid's store
+      id: store
       if: inputs.cache == 'true' && steps.grid.outputs.address == ''
-      uses: actions/cache@v4
+      uses: actions/cache/restore@v4
       with:
         path: ~/.frontseat
         key: frontseat-store-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
@@ -113,8 +114,9 @@ runs:
 
     # The memos are named by the grid they were made against.
     - name: Restore the workspace's memos
+      id: memos
       if: inputs.cache == 'true'
-      uses: actions/cache@v4
+      uses: actions/cache/restore@v4
       with:
         path: |
           ${{ inputs.working-directory }}/.frontseat/memo
@@ -128,8 +130,9 @@ runs:
     # fallback key: the compiled wasm is never pruned, and a cache carried
     # from pin to pin would only grow.
     - name: Restore frontseat's plugins
+      id: plugins
       if: inputs.cache == 'true'
-      uses: actions/cache@v4
+      uses: actions/cache/restore@v4
       with:
         path: |
           ~/.cache/frontseat/plugins
@@ -152,3 +155,31 @@ runs:
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
       run: mise exec -- frontseat publish --plain
+
+    # Saved after the run, whether it passed or not: what the store and the
+    # memos hold is checked when it is read, so a failed run's is as good to
+    # start from. A key the restore already found is left as it is.
+    - name: Save the embedded grid's store
+      if: ${{ !cancelled() && steps.store.outcome == 'success' && steps.store.outputs.cache-hit != 'true' }}
+      uses: actions/cache/save@v4
+      with:
+        path: ~/.frontseat
+        key: ${{ steps.store.outputs.cache-primary-key }}
+
+    - name: Save the workspace's memos
+      if: ${{ !cancelled() && steps.memos.outcome == 'success' && steps.memos.outputs.cache-hit != 'true' }}
+      uses: actions/cache/save@v4
+      with:
+        path: |
+          ${{ inputs.working-directory }}/.frontseat/memo
+          ${{ inputs.working-directory }}/.frontseat/fingerprints
+        key: ${{ steps.memos.outputs.cache-primary-key }}
+
+    - name: Save frontseat's plugins
+      if: ${{ !cancelled() && steps.plugins.outcome == 'success' && steps.plugins.outputs.cache-hit != 'true' }}
+      uses: actions/cache/save@v4
+      with:
+        path: |
+          ~/.cache/frontseat/plugins
+          ~/.cache/frontseat/wasm
+        key: ${{ steps.plugins.outputs.cache-primary-key }}
