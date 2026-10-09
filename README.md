@@ -1,6 +1,6 @@
 # frontseat-action
 
-Readies a GitHub-hosted runner to run [frontseat](https://github.com/frontseat-dev/frontseat).
+Readies a runner, GitHub-hosted or the workspace's own, to run [frontseat](https://github.com/frontseat-dev/frontseat).
 
 You do not write the workflow that uses it. frontseat's github plugin renders
 `.github/workflows/frontseat.yml` from `frontseat.yaml`, and `frontseat
@@ -23,9 +23,12 @@ steps run before the action. The action:
 2. reads `grid.address` from `frontseat.yaml`;
 3. without one, frees disk, since the embedded grid then runs on the runner
    and will not start an action with less than 8 GiB free;
-4. installs bubblewrap and allows the user namespaces it needs: the embedded
-   grid confines every action, and effects such as publishes run on an
-   embedded grid of their own even when a remote grid builds;
+4. readies the sandbox: the embedded grid confines every action under
+   bubblewrap, and effects such as publishes run on an embedded grid of
+   their own even when a remote grid builds. A runner that has `bwrap` is
+   left as it is; where it is missing and `apt-get` exists, the action
+   installs it and allows the user namespaces it needs; anywhere else it
+   fails, and the runner's image must carry bubblewrap;
 5. installs the repository's mise toolchain, frontseat included;
 6. restores the workspace's memos and, without a named grid, the embedded
    grid's store, and saves them after the job;
