@@ -3,7 +3,7 @@
 ## The runner's AppArmor policy is relaxed for the sandbox
 
 - **Where:** `action.yml`, "Ready the sandbox"
-- **Why:** Ubuntu 24.04 denies unprivileged user namespaces through AppArmor (`kernel.apparmor_restrict_unprivileged_userns=1`), and bubblewrap needs one to confine an action; the action turns the restriction off on the runner it owns.
+- **Why:** Ubuntu 24.04 denies unprivileged user namespaces through AppArmor (`kernel.apparmor_restrict_unprivileged_userns=1`), and bubblewrap needs one to confine an action; where the action installs bubblewrap with apt, it turns the restriction off on the runner it owns; a runner that already has bubblewrap is left as it is.
 - **Remove when:** Ubuntu ships an AppArmor profile that grants bubblewrap its namespaces, or GitHub's images allow them.
 
 ## Preinstalled toolchains are deleted for disk

@@ -1,8 +1,8 @@
 name: Frontseat
 description: >-
-  Run frontseat on a GitHub-hosted runner: check the repository out, ready the
-  runner for the grid frontseat.yaml names, verify, and publish when the
-  workflow says this run releases.
+  Run frontseat on a runner: check the repository out, ready the runner for
+  the grid frontseat.yaml names, verify, and publish when the workflow says
+  this run releases.
 author: frontseat-dev
 branding:
   icon: layers
@@ -78,16 +78,25 @@ runs:
         sudo docker image prune --all --force >/dev/null 2>&1 || true
         df -h /
 
-    # The embedded grid confines every action under bubblewrap. Ubuntu's
-    # images do not ship it, and their AppArmor policy denies the
-    # unprivileged user namespaces it needs.
+    # The embedded grid confines every action under bubblewrap. A runner
+    # that has it is ready as it is. GitHub's Ubuntu images do not ship it,
+    # and their AppArmor policy denies the unprivileged user namespaces it
+    # needs, so where apt can install it the action does both. Anywhere
+    # else the runner's image must carry it.
     - name: Ready the sandbox
       if: runner.os == 'Linux'
       shell: bash
       run: |
-        sudo apt-get update -qq
-        sudo apt-get install -y -qq bubblewrap
-        sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+        if command -v bwrap >/dev/null; then
+          echo "sandbox: $(bwrap --version)"
+        elif command -v apt-get >/dev/null; then
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+        else
+          echo "::error title=No sandbox::frontseat confines every action under bubblewrap, and this runner has no bwrap and no apt-get to install it with. Put bubblewrap in the runner's image."
+          exit 1
+        fi
 
     # The repository's mise.toml names every tool, frontseat included; a
     # checkout of frontseat builds its own through mise's postinstall hook.
