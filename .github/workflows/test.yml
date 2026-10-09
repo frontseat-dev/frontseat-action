@@ -1,0 +1,21 @@
+name: Test
+
+# Runs the action itself, as a caller would, on a GitHub-hosted runner with
+# the embedded grid: the path every release takes, since a publish's
+# effects run on an embedded grid of their own.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  hosted:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./
+        with:
+          working-directory: test/workspace

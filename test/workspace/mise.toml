@@ -1,0 +1,7 @@
+# The smallest workspace the action can run: the frontseat CLI and nothing to
+# build. It runs on the embedded grid, so the action must ready the sandbox.
+[plugins]
+frontseat = "https://github.com/frontseat-dev/frontseat-mise.git"
+
+[tools]
+"frontseat:cli" = "0.51.0"
