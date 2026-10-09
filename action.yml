@@ -58,14 +58,49 @@ runs:
       with:
         fetch-depth: 0
 
+    # The repository's mise.toml names every tool, frontseat included; a
+    # checkout of frontseat builds its own through mise's postinstall hook.
+    - name: Install the toolchain
+      uses: jdx/mise-action@v2
+      with:
+        working_directory: ${{ inputs.working-directory }}
+        github_token: ${{ inputs.github-token }}
+      # A tool pinned from GitHub releases, frontseat's own among them, is
+      # fetched with the job's token: a private repository's releases need
+      # it, and a public one's are not rate-limited with it.
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+
+    # The grid frontseat.yaml selects, as frontseat selects it: grid's
+    # address, else the one of grids FRONTSEAT_GRID names, else the one
+    # marked default, else the only one. No address is the embedded grid.
+    # frontseat.yaml is read with yq, run through mise at a pinned version,
+    # so the runner needs nothing but mise.
     - name: Read the grid
       id: grid
       shell: bash
       working-directory: ${{ inputs.working-directory }}
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
       run: |
-        address=$(/usr/bin/python3 -c 'import sys, yaml; c = yaml.safe_load(open(sys.argv[1])) or {}; print((c.get("grid") or {}).get("address", ""))' frontseat.yaml)
+        yq() { mise exec aqua:mikefarah/yq@4.54.1 -- yq "$@" frontseat.yaml; }
+        address=$(yq '.grid.address // ""')
+        name=""
+        if [ -z "$address" ]; then
+          name=${FRONTSEAT_GRID:-}
+          [ -n "$name" ] || name=$(yq '(.grids // {}) | to_entries | map(select(.value.default == true)) | .[0].key // ""')
+          [ -n "$name" ] || [ "$(yq '(.grids // {}) | length')" != 1 ] || name=$(yq '.grids | keys | .[0]')
+          if [ -n "$name" ]; then
+            address=$(NAME=$name yq '.grids[strenv(NAME)].address // ""')
+            if [ -z "$address" ]; then
+              echo "::error title=No such grid::the run selects the grid $name, which frontseat.yaml does not name under grids with an address."
+              exit 1
+            fi
+          fi
+        fi
         echo "address=$address" >> "$GITHUB_OUTPUT"
-        echo "grid: ${address:-embedded}"
+        echo "grid: ${name:+$name at }${address:-embedded}"
 
     - name: Free disk
       if: inputs.free-disk == 'true' && runner.os == 'Linux' && steps.grid.outputs.address == ''
@@ -97,20 +132,6 @@ runs:
           echo "::error title=No sandbox::frontseat confines every action under bubblewrap, and this runner has no bwrap and no apt-get to install it with. Put bubblewrap in the runner's image."
           exit 1
         fi
-
-    # The repository's mise.toml names every tool, frontseat included; a
-    # checkout of frontseat builds its own through mise's postinstall hook.
-    - name: Install the toolchain
-      uses: jdx/mise-action@v2
-      with:
-        working_directory: ${{ inputs.working-directory }}
-        github_token: ${{ inputs.github-token }}
-      # A tool pinned from GitHub releases, frontseat's own among them, is
-      # fetched with the job's token: a private repository's releases need
-      # it, and a public one's are not rate-limited with it.
-      env:
-        GH_TOKEN: ${{ inputs.github-token }}
-        GITHUB_TOKEN: ${{ inputs.github-token }}
 
     - name: Restore the embedded grid's store
       id: store
