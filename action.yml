@@ -26,7 +26,7 @@ inputs:
   github-token:
     description: >-
       The token tools are installed with from GitHub releases, and a publish
-      uses for the forge.
+      uses for the forge and GitHub's registry.
     required: false
     default: ${{ github.token }}
   working-directory:
@@ -186,6 +186,31 @@ runs:
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
       run: mise exec -- frontseat verify --plain
+
+    # A publish pushes images and charts as its tools do, with the
+    # credentials of the Docker config: gib and crossplane read it, and helm
+    # falls back to it. A run that releases logs in to GitHub's registry
+    # with the token, in a config of the job's own beside what the runner's
+    # already holds, so it lasts only as long as the job. The workflow grants
+    # the token packages: write.
+    - name: Log in to GitHub's registry
+      if: inputs.release == 'true'
+      shell: bash
+      env:
+        ACTOR: ${{ github.actor }}
+        TOKEN: ${{ inputs.github-token }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: |
+        auth=$(printf '%s:%s' "$ACTOR" "$TOKEN" | base64 | tr -d '\n')
+        echo "::add-mask::$auth"
+        dir=$RUNNER_TEMP/frontseat-docker
+        mkdir -p "$dir"
+        from=${DOCKER_CONFIG:-$HOME/.docker}/config.json
+        if [ -s "$from" ]; then cp "$from" "$dir/config.json"; else echo '{}' > "$dir/config.json"; fi
+        chmod 600 "$dir/config.json"
+        AUTH=$auth mise exec aqua:mikefarah/yq@4.54.1 -- yq -i -o json '.auths["ghcr.io"].auth = strenv(AUTH)' "$dir/config.json"
+        echo "DOCKER_CONFIG=$dir" >> "$GITHUB_ENV"
+        echo "logged in to ghcr.io as $ACTOR"
 
     - name: Publish
       if: inputs.release == 'true'
