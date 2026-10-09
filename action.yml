@@ -87,30 +87,25 @@ runs:
       if: runner.os == 'Linux'
       shell: bash
       run: |
-        if command -v bwrap >/dev/null; then
+        # A sandbox is ready when bubblewrap can make the namespaces frontseat
+        # confines an action in, network included; being installed is not
+        # enough (Ubuntu ships bwrap but restricts unprivileged user
+        # namespaces through AppArmor).
+        works() { command -v bwrap >/dev/null && bwrap --ro-bind / / --unshare-all --die-with-parent true 2>/dev/null; }
+        if works; then
           echo "sandbox: $(bwrap --version)"
-        elif command -v apt-get >/dev/null; then
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq bubblewrap
+          exit 0
+        fi
+        if command -v apt-get >/dev/null && command -v sudo >/dev/null; then
+          command -v bwrap >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq bubblewrap; }
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+        fi
+        if works; then
+          echo "sandbox: $(bwrap --version)"
         else
-          echo "::error title=No sandbox::frontseat confines every action under bubblewrap, and this runner has no bwrap and no apt-get to install it with. Put bubblewrap in the runner's image."
+          echo "::error title=No sandbox::frontseat confines every action under bubblewrap, and bubblewrap cannot make its namespaces on this runner. Put a working bubblewrap in the runner's image, with unprivileged user namespaces allowed."
           exit 1
         fi
-
-    # The repository's mise.toml names every tool, frontseat included; a
-    # checkout of frontseat builds its own through mise's postinstall hook.
-    - name: Install the toolchain
-      uses: jdx/mise-action@v2
-      with:
-        working_directory: ${{ inputs.working-directory }}
-        github_token: ${{ inputs.github-token }}
-      # A tool pinned from GitHub releases, frontseat's own among them, is
-      # fetched with the job's token: a private repository's releases need
-      # it, and a public one's are not rate-limited with it.
-      env:
-        GH_TOKEN: ${{ inputs.github-token }}
-        GITHUB_TOKEN: ${{ inputs.github-token }}
 
     - name: Restore the embedded grid's store
       id: store
