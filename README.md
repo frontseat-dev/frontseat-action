@@ -37,14 +37,18 @@ steps run before the action. The action:
 6. restores the workspace's memos and, without a named grid, the embedded
    grid's store, and saves them after the job;
 7. runs `frontseat verify`, then `frontseat publish` when `release` is
-   `true`.
+   `true`, logged in to `ghcr.io` with `github-token` first: the publish's
+   tools push with the Docker config's credentials, and the action writes
+   them to a config of the job's own, beside what the runner's holds. The
+   workflow grants the token `packages: write` (the github plugin's
+   `permissions`).
 
 ## Inputs
 
 | name | default | |
 |---|---|---|
 | `release` | `false` | Publish after verifying. |
-| `github-token` | the job's token | The token tools are installed with from GitHub releases, and a publish uses for the forge. |
+| `github-token` | the job's token | The token tools are installed with from GitHub releases, and a publish uses for the forge and GitHub's registry. |
 | `working-directory` | `.` | Directory holding `frontseat.yaml` and `mise.toml`. |
 | `free-disk` | `true` | Remove preinstalled toolchains frontseat never uses, when the grid is the embedded one. Turn it off on a self-hosted runner. |
 | `cache` | `true` | Restore and save the memos, the plugins and their compiled wasm, and the embedded grid's store. |
