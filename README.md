@@ -20,16 +20,20 @@ a VPN client for one, is the repository's own: the github plugin's `setup`
 steps run before the action. The action:
 
 1. checks the repository out with its history and tags;
-2. reads `grid.address` from `frontseat.yaml`;
-3. without one, frees disk, since the embedded grid then runs on the runner
-   and will not start an action with less than 8 GiB free;
-4. readies the sandbox: the embedded grid confines every action under
+2. installs the repository's mise toolchain, frontseat included;
+3. reads the grid the run selects from `frontseat.yaml`, as frontseat
+   selects it: `grid`'s address, else the one of `grids` that
+   `FRONTSEAT_GRID` names, else the one marked `default`, else the only
+   one. It reads the file with yq, which mise runs at a pinned version, so
+   a runner needs only mise and bash;
+4. without a grid address, frees disk, since the embedded grid then runs
+   on the runner and will not start an action with less than 8 GiB free;
+5. readies the sandbox: the embedded grid confines every action under
    bubblewrap, and effects such as publishes run on an embedded grid of
    their own even when a remote grid builds. A runner that has `bwrap` is
    left as it is; where it is missing and `apt-get` exists, the action
    installs it and allows the user namespaces it needs; anywhere else it
    fails, and the runner's image must carry bubblewrap;
-5. installs the repository's mise toolchain, frontseat included;
 6. restores the workspace's memos and, without a named grid, the embedded
    grid's store, and saves them after the job;
 7. runs `frontseat verify`, then `frontseat publish` when `release` is
