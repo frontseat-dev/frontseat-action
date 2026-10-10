@@ -19,3 +19,15 @@ jobs:
       - uses: ./
         with:
           working-directory: test/workspace
+
+  # A runner that keeps frontseat's state on volumes of its own sets
+  # FRONTSEAT_STATE_DIR; the action then leaves the memos and plugins to it.
+  volumes:
+    runs-on: ubuntu-latest
+    env:
+      FRONTSEAT_STATE_DIR: /tmp/frontseat-state
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./
+        with:
+          working-directory: test/workspace
