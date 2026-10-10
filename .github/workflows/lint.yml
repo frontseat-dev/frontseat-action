@@ -20,12 +20,24 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # actionlint parses every workflow as GitHub does, expressions
+      # included, so a workflow GitHub would reject fails here first.
+      - uses: jdx/mise-action@v2
+        with:
+          install: false
+      - name: Lint the workflows
+        run: mise exec aqua:rhysd/actionlint@1.7.7 -- actionlint
+
       - name: Validate action and workflow YAML
         run: |
           python3 - <<'PY'
           import sys, yaml
 
           FILES = ['action.yml']
+          # Spelled in two halves: written whole, GitHub reads it as the
+          # start of an expression in this very script, and the workflow
+          # itself is invalid.
+          OPEN = '$' + '{{'
           errors = []
 
           for path in FILES:
@@ -49,10 +61,10 @@ jobs:
                       # against a context list that excludes secrets, so a
                       # literal example makes the whole file unparseable and
                       # every caller fails to start with zero jobs.
-                      if '${{' in desc:
+                      if OPEN in desc:
                           errors.append(
-                              f'{path}: {group}.{name} description contains a '
-                              f'${{{{ }}}} expression; move the example to the README'
+                              f'{path}: {group}.{name} description contains an '
+                              f'{OPEN} expression; move the example to the README'
                           )
 
           if errors:
