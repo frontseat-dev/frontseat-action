@@ -1,5 +1,8 @@
 # The smallest workspace the action can run: the frontseat CLI and nothing to
 # build. It runs on the embedded grid, so the action must ready the sandbox.
+# min_version is the mise the action installs.
+min_version = "2026.8.12"
+
 [plugins]
 frontseat = "https://github.com/frontseat-dev/frontseat-mise.git"
 

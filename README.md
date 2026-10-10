@@ -20,7 +20,14 @@ a VPN client for one, is the repository's own: the github plugin's `setup`
 steps run before the action. The action:
 
 1. checks the repository out with its history and tags;
-2. installs the repository's mise toolchain, frontseat included;
+2. installs the repository's mise toolchain, frontseat included, with
+   the mise the repository names: the `min_version` at the top of its
+   root `mise.toml` (or `.mise.toml`, or a config under `mise/`,
+   `.mise/` or `.config/`), `min_version = "2026.8.12"` or a table's
+   `hard` version. It must be an exact version, and the action installs
+   exactly that mise. Without one, the action installs the newest mise,
+   as before, and warns; frontseat's mise plugin reports the missing
+   `min_version` with its `exact-version` rule;
 3. reads the grid the run selects from `frontseat.yaml`, as frontseat
    selects it: `grid`'s address, else the one of `grids` that
    `FRONTSEAT_GRID` names, else the one marked `default`, else the only
