@@ -79,11 +79,46 @@ runs:
           echo "state: in the checkout, cached by the action"
         fi
 
+    # The mise the repository names with min_version, in the first of its
+    # root configs that sets one, as min_version = "x.y.z" or a table's
+    # hard version: mise-action installs whatever mise is newest unless it
+    # is handed a version, and mise is not on the runner yet to read the
+    # config itself. Only the top level is read, up to the first table.
+    - name: Read the mise version
+      id: mise
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        version=""
+        found=""
+        for f in mise.toml .mise.toml mise/config.toml .mise/config.toml .config/mise.toml .config/mise/config.toml .config/mise/mise.toml; do
+          [ -f "$f" ] || continue
+          value=$(sed -n -e '/^[[:space:]]*\[/q' -e 's/^[[:space:]]*min_version[[:space:]]*=[[:space:]]*//p' "$f" | head -n 1)
+          [ -n "$value" ] || continue
+          found=$f
+          case "$value" in
+            "{"*) value=$(printf '%s\n' "$value" | sed -n "s/.*hard[[:space:]]*=[[:space:]]*[\"']\([^\"']*\)[\"'].*/\1/p") ;;
+            *) value=$(printf '%s\n' "$value" | sed -n "s/^[\"']\([^\"']*\)[\"'].*/\1/p") ;;
+          esac
+          if printf '%s\n' "$value" | grep -Eq '^[0-9]{4}\.[0-9]{1,2}\.[0-9]+$'; then
+            version=$value
+            echo "mise $version, the min_version of $f"
+          else
+            echo "::warning file=$f::min_version names no exact mise version (${value:-none}); installing the newest mise"
+          fi
+          break
+        done
+        if [ -z "$found" ]; then
+          echo "::warning::mise.toml names no min_version; installing the newest mise. Add min_version = \"x.y.z\" to pin it."
+        fi
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+
     # The repository's mise.toml names every tool, frontseat included; a
     # checkout of frontseat builds its own through mise's postinstall hook.
     - name: Install the toolchain
       uses: jdx/mise-action@v2
       with:
+        version: ${{ steps.mise.outputs.version }}
         working_directory: ${{ inputs.working-directory }}
         github_token: ${{ inputs.github-token }}
         cache: ${{ inputs.cache == 'true' && steps.runner.outputs.volumes != 'true' }}

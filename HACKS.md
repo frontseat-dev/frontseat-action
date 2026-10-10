@@ -11,3 +11,9 @@
 - **Where:** `action.yml`, "Free disk"
 - **Why:** GitHub's Ubuntu images leave about 14 GiB free, and the embedded grid will not start an action below 8 GiB; the toolchains the images preinstall are the space there is to take.
 - **Remove when:** GitHub's images leave room for a grid store, or frontseat runs on a grid of its own.
+
+## The mise version is read from mise.toml with sed
+
+- **Where:** `action.yml`, "Read the mise version"
+- **Why:** jdx/mise-action installs the newest mise unless its `version` input names one, and it does not read `min_version`. mise is not on the runner yet to read its own config, so the action reads the top-level `min_version` (a string or a table's `hard`) with sed.
+- **Remove when:** mise-action installs the mise a repository's `min_version` names.
