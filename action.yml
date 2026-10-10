@@ -45,8 +45,9 @@ inputs:
     description: >-
       Restore and save the workspace's memos, frontseat's plugins and their
       compiled wasm, and the embedded grid's store when frontseat.yaml names
-      no grid. A runner that sets FRONTSEAT_STATE_DIR keeps the memos and
-      plugins on volumes of its own, and the action leaves them to it.
+      no grid, and mise's tools. A runner that sets FRONTSEAT_STATE_DIR keeps
+      the memos, plugins and tools on volumes of its own, and the action
+      leaves them to it.
     required: false
     default: "true"
 
@@ -59,6 +60,25 @@ runs:
       with:
         fetch-depth: 0
 
+    # A runner whose caches live on volumes it keeps from job to job sets
+    # FRONTSEAT_STATE_DIR in its environment, where frontseat keeps the
+    # workspace's memos, beside the user cache that holds the plugins, and
+    # keeps mise's tools on a volume too. Its volumes already hold what the
+    # cache steps would restore, the toolchain among them, so they are
+    # skipped. The variable is the runner's, not the workflow's, so it is
+    # read from the shell: the env context sees only what YAML set.
+    - name: Read where the runner keeps state
+      id: runner
+      shell: bash
+      run: |
+        if [ -n "${FRONTSEAT_STATE_DIR:-}" ]; then
+          echo "volumes=true" >> "$GITHUB_OUTPUT"
+          echo "state: $FRONTSEAT_STATE_DIR, kept by the runner"
+        else
+          echo "volumes=false" >> "$GITHUB_OUTPUT"
+          echo "state: in the checkout, cached by the action"
+        fi
+
     # The repository's mise.toml names every tool, frontseat included; a
     # checkout of frontseat builds its own through mise's postinstall hook.
     - name: Install the toolchain
@@ -66,6 +86,7 @@ runs:
       with:
         working_directory: ${{ inputs.working-directory }}
         github_token: ${{ inputs.github-token }}
+        cache: ${{ inputs.cache == 'true' && steps.runner.outputs.volumes != 'true' }}
       # A tool pinned from GitHub releases, frontseat's own among them, is
       # fetched with the job's token: a private repository's releases need
       # it, and a public one's are not rate-limited with it.
@@ -102,24 +123,6 @@ runs:
         fi
         echo "address=$address" >> "$GITHUB_OUTPUT"
         echo "grid: ${name:+$name at }${address:-embedded}"
-
-    # A runner whose caches live on volumes it keeps from job to job sets
-    # FRONTSEAT_STATE_DIR in its environment, where frontseat keeps the
-    # workspace's memos, beside the user cache that holds the plugins. Its
-    # volumes already hold what the cache steps would restore, so they are
-    # skipped. The variable is the runner's, not the workflow's, so it is
-    # read from the shell: the env context sees only what YAML set.
-    - name: Read where the runner keeps state
-      id: runner
-      shell: bash
-      run: |
-        if [ -n "${FRONTSEAT_STATE_DIR:-}" ]; then
-          echo "volumes=true" >> "$GITHUB_OUTPUT"
-          echo "state: $FRONTSEAT_STATE_DIR, kept by the runner"
-        else
-          echo "volumes=false" >> "$GITHUB_OUTPUT"
-          echo "state: in the checkout, cached by the action"
-        fi
 
     - name: Free disk
       if: inputs.free-disk == 'true' && runner.os == 'Linux' && steps.grid.outputs.address == ''
