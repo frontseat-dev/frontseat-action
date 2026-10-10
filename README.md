@@ -38,8 +38,9 @@ steps run before the action. The action:
    named grid, the embedded grid's store, and saves them after the job. A
    runner that keeps its caches on volumes from job to job says so by
    setting `FRONTSEAT_STATE_DIR` in its environment, where frontseat then
-   keeps the memos, with the plugins in the user cache beside it; there
-   the action restores and saves neither;
+   keeps the memos, with the plugins in the user cache beside it and
+   mise's tools on a volume of their own; there the action restores and
+   saves none of them, the toolchain's cache included;
 7. runs `frontseat verify`, then `frontseat publish` when `release` is
    `true`, logged in to `ghcr.io` with `github-token` first: the publish's
    tools push with the Docker config's credentials, and the action writes
@@ -55,6 +56,6 @@ steps run before the action. The action:
 | `github-token` | the job's token | The token tools are installed with from GitHub releases, and a publish uses for the forge and GitHub's registry. |
 | `working-directory` | `.` | Directory holding `frontseat.yaml` and `mise.toml`. |
 | `free-disk` | `true` | Remove preinstalled toolchains frontseat never uses, when the grid is the embedded one. Turn it off on a self-hosted runner. |
-| `cache` | `true` | Restore and save the memos, the plugins and their compiled wasm, and the embedded grid's store. On a runner that sets `FRONTSEAT_STATE_DIR`, only the store. |
+| `cache` | `true` | Restore and save the memos, the plugins and their compiled wasm, and the embedded grid's store. and mise's tools. On a runner that sets `FRONTSEAT_STATE_DIR`, only the store. |
 
 Workarounds the action carries are in [HACKS.md](HACKS.md).
