@@ -54,11 +54,13 @@ inputs:
 runs:
   using: composite
   steps:
-    # The tags and history a release reads come with the checkout.
+    # A release reads the tags and history, which come with the checkout;
+    # a verify reads neither, so it takes only the commit it verifies,
+    # seconds less on every run.
     - name: Check out
       uses: actions/checkout@v4
       with:
-        fetch-depth: 0
+        fetch-depth: ${{ inputs.release == 'true' && '0' || '1' }}
 
     # A runner whose caches live on volumes it keeps from job to job sets
     # FRONTSEAT_STATE_DIR in its environment, where frontseat keeps the
