@@ -117,19 +117,38 @@ runs:
 
     # The repository's mise.toml names every tool, frontseat included; a
     # checkout of frontseat builds its own through mise's postinstall hook.
-    - name: Install the toolchain
+    - name: Install mise
       uses: jdx/mise-action@v2
       with:
         version: ${{ steps.mise.outputs.version }}
         working_directory: ${{ inputs.working-directory }}
         github_token: ${{ inputs.github-token }}
         cache: ${{ inputs.cache == 'true' && steps.runner.outputs.volumes != 'true' }}
-      # A tool pinned from GitHub releases, frontseat's own among them, is
-      # fetched with the job's token: a private repository's releases need
-      # it, and a public one's are not rate-limited with it.
+        install: false
       env:
         GH_TOKEN: ${{ inputs.github-token }}
         GITHUB_TOKEN: ${{ inputs.github-token }}
+
+    # A git plugin mise installed once is never updated by mise itself: on a
+    # runner whose mise state outlives the job (a cache, or a volume of its
+    # own), a backend's fix never arrived, and frontseat 0.65.0 failed to
+    # install on tenant zero with frontseat-mise's old hook. Every installed
+    # plugin is brought to its source first. A tool pinned
+    # from GitHub releases, frontseat's own among them, is fetched with the
+    # job's token: a private repository's releases need it, and a public
+    # one's are not rate-limited with it.
+    - name: Install the toolchain
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: |
+        # A plugin no configuration here needs may fail to update (a stale
+        # clone of one, rewritten upstream); that is not this job's
+        # failure. One it needs that is still broken fails the install.
+        mise plugins update || echo "::warning::mise could not update every plugin; installing with what it has"
+        mise install
 
     # The grid frontseat.yaml selects, as frontseat selects it: grid's
     # address, else the one of grids FRONTSEAT_GRID names, else the one
