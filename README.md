@@ -13,7 +13,7 @@ jobs:
     env:
       FRONTSEAT_WORKSPACE: /etc/frontseat/zero/workspace.yaml
     steps:
-      - uses: frontseat-dev/frontseat-action@v2
+      - uses: frontseat-dev/frontseat-action@v1
         with:
           release: ${{ github.event_name == 'workflow_dispatch' && inputs.release }}
 ```
