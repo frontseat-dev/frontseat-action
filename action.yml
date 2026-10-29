@@ -1,18 +1,18 @@
 name: Frontseat
 description: >-
   Run frontseat on a runner: check the repository out, ready the runner for
-  the grid frontseat.yaml names, verify, and publish when the workflow says
-  this run releases.
+  the grid the runner's manifest names, verify, and publish when the workflow
+  says this run releases.
 author: frontseat-dev
 branding:
   icon: layers
   color: orange
 
-# The workflow that calls this is generated: frontseat's github plugin renders
-# it from frontseat.yaml and keeps what is the workspace's own, the triggers
-# and whether a run releases. Everything else happens here.
+# The workflow that calls this is the repository's own: its triggers, whether
+# a run releases, and which of the runner's manifests a job names with
+# FRONTSEAT_WORKSPACE. Everything else happens here.
 #
-# frontseat runs on the grid frontseat.yaml names. Without one it runs the
+# frontseat runs on the grid the runner's manifest names. Without one it runs the
 # embedded grid on the runner, which needs the disk and keeps the store this
 # action caches; with one, the runner only stages and fetches. Effects, the
 # publishes among them, always run on an embedded grid of their own, so the
@@ -36,7 +36,7 @@ inputs:
   free-disk:
     description: >-
       Remove toolchains GitHub's images preinstall and frontseat never uses,
-      when frontseat.yaml names no grid. The embedded grid refuses to start an action with less than 8 GiB free, and a
+      when the run is on the embedded grid. The embedded grid refuses to start an action with less than 8 GiB free, and a
       stock ubuntu-latest runner leaves about 14 GiB before any build. Turn it
       off on a self-hosted runner.
     required: false
@@ -44,8 +44,8 @@ inputs:
   cache:
     description: >-
       Restore and save the workspace's memos, frontseat's plugins and their
-      compiled wasm, and the embedded grid's store when frontseat.yaml names
-      no grid, and mise's tools. A runner that sets FRONTSEAT_STATE_DIR keeps
+      compiled wasm, and the embedded grid's store when the run is on the
+      embedded grid, and mise's tools. A runner that sets FRONTSEAT_STATE_DIR keeps
       the memos, plugins and tools on volumes of its own, and the action
       leaves them to it.
     required: false
@@ -150,11 +150,13 @@ runs:
         mise plugins update || echo "::warning::mise could not update every plugin; installing with what it has"
         mise install
 
-    # The grid frontseat.yaml selects, as frontseat selects it: grid's
-    # address, else the one of grids FRONTSEAT_GRID names, else the one
-    # marked default, else the only one. No address is the embedded grid.
-    # frontseat.yaml is read with yq, run through mise at a pinned version,
-    # so the runner needs nothing but mise.
+    # The grid the runner gives the run, as frontseat finds it: the
+    # manifest FRONTSEAT_WORKSPACE names, else the box's
+    # .frontseat/workspace.yaml, else the machine's
+    # /etc/frontseat/workspace.yaml. A manifest naming no grid, or none at
+    # all, is the embedded grid. The repository's frontseat.yaml names no
+    # grid. Manifests are read with yq, run through mise at a pinned
+    # version, so the runner needs nothing but mise.
     - name: Read the grid
       id: grid
       shell: bash
@@ -162,23 +164,20 @@ runs:
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
       run: |
-        yq() { mise exec aqua:mikefarah/yq@4.54.1 -- yq "$@" frontseat.yaml; }
-        address=$(yq '.grid.address // ""')
-        name=""
-        if [ -z "$address" ]; then
-          name=${FRONTSEAT_GRID:-}
-          [ -n "$name" ] || name=$(yq '(.grids // {}) | to_entries | map(select(.value.default == true)) | .[0].key // ""')
-          [ -n "$name" ] || [ "$(yq '(.grids // {}) | length')" != 1 ] || name=$(yq '.grids | keys | .[0]')
-          if [ -n "$name" ]; then
-            address=$(NAME=$name yq '.grids[strenv(NAME)].address // ""')
-            if [ -z "$address" ]; then
-              echo "::error title=No such grid::the run selects the grid $name, which frontseat.yaml does not name under grids with an address."
-              exit 1
-            fi
-          fi
+        manifest=""
+        for f in "${FRONTSEAT_WORKSPACE:-}" .frontseat/workspace.yaml /etc/frontseat/workspace.yaml; do
+          if [ -n "$f" ] && [ -f "$f" ]; then manifest=$f; break; fi
+        done
+        if [ -n "${FRONTSEAT_WORKSPACE:-}" ] && [ "$manifest" != "$FRONTSEAT_WORKSPACE" ]; then
+          echo "::error title=No manifest::FRONTSEAT_WORKSPACE names $FRONTSEAT_WORKSPACE, which the runner does not hold."
+          exit 1
+        fi
+        address=""
+        if [ -n "$manifest" ]; then
+          address=$(mise exec aqua:mikefarah/yq@4.54.1 -- yq '.grid.address // ""' "$manifest")
         fi
         echo "address=$address" >> "$GITHUB_OUTPUT"
-        echo "grid: ${name:+$name at }${address:-embedded}"
+        echo "grid: ${address:-embedded}${manifest:+ (from $manifest)}"
 
     - name: Free disk
       if: inputs.free-disk == 'true' && runner.os == 'Linux' && steps.grid.outputs.address == ''

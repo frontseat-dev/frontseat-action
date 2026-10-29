@@ -2,22 +2,31 @@
 
 Readies a runner, GitHub-hosted or the workspace's own, to run [frontseat](https://github.com/frontseat-dev/frontseat).
 
-You do not write the workflow that uses it. frontseat's github plugin renders
-`.github/workflows/frontseat.yml` from `frontseat.yaml`, and `frontseat
-generate --fix` keeps it in step. The workflow keeps the triggers and the
-decision whether a run releases; the action does the rest:
+The workflow that uses it is the repository's own: it keeps the triggers,
+the decision whether a run releases, and which of the runner's manifests a
+job names; the action does the rest:
 
 ```yaml
-steps:
-  - uses: frontseat-dev/frontseat-action@v1
-    with:
-      release: ${{ github.event_name == 'workflow_dispatch' && inputs.release }}
+jobs:
+  ship:
+    runs-on: zero
+    env:
+      FRONTSEAT_WORKSPACE: /etc/frontseat/zero/workspace.yaml
+    steps:
+      - uses: frontseat-dev/frontseat-action@v2
+        with:
+          release: ${{ github.event_name == 'workflow_dispatch' && inputs.release }}
 ```
 
-frontseat runs on the grid `frontseat.yaml` names, any REAPI grid, and the
-action readies the runner for it. What the runner needs to reach that grid,
-a VPN client for one, is the repository's own: the github plugin's `setup`
-steps run before the action. The action:
+frontseat runs on the grid the runner gives it, any REAPI grid, and the
+action readies the runner for it. The grid is the runner's: a workspace
+manifest (`frontseat`'s `.frontseat/workspace.yaml` format, naming a `grid`
+and no repositories) the runner's image holds, named by
+`FRONTSEAT_WORKSPACE` where a runner holds several, or found at
+`/etc/frontseat/workspace.yaml`. The repository's `frontseat.yaml` names
+no grid. What the runner needs to reach that grid, a VPN client for one,
+is the runner's or the workflow's own, in steps before the action. The
+action:
 
 1. checks the repository out with its history and tags;
 2. installs the repository's mise toolchain, frontseat included, with
@@ -28,11 +37,12 @@ steps run before the action. The action:
    exactly that mise. Without one, the action installs the newest mise,
    as before, and warns; frontseat's mise plugin reports the missing
    `min_version` with its `exact-version` rule;
-3. reads the grid the run selects from `frontseat.yaml`, as frontseat
-   selects it: `grid`'s address, else the one of `grids` that
-   `FRONTSEAT_GRID` names, else the one marked `default`, else the only
-   one. It reads the file with yq, which mise runs at a pinned version, so
-   a runner needs only mise and bash;
+3. reads the grid the runner gives the run, as frontseat finds it: the
+   manifest `FRONTSEAT_WORKSPACE` names (a name the runner does not hold
+   fails the job), else the box's `.frontseat/workspace.yaml`, else
+   `/etc/frontseat/workspace.yaml`; a manifest naming no grid, or none,
+   is the embedded grid. It reads the manifest with yq, which mise runs at
+   a pinned version, so a runner needs only mise and bash;
 4. without a grid address, frees disk, since the embedded grid then runs
    on the runner and will not start an action with less than 8 GiB free;
 5. readies the sandbox: the embedded grid confines every action under
