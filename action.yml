@@ -297,6 +297,17 @@ runs:
         GITHUB_TOKEN: ${{ inputs.github-token }}
       run: mise exec -- frontseat publish --plain
 
+    # The run's daemon stops with the job, whether the run passed or not:
+    # left running, it is an orphan the runner must kill after the job's
+    # last step, and on an ephemeral runner that cleanup can outlive the
+    # runner, which then never reports the job finished. Stopping it here
+    # also lets the store and the memos settle before they are saved.
+    - name: Stop the daemon
+      if: always()
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: mise exec -- frontseat daemon stop || echo "::warning::frontseat could not stop its daemon; the runner will"
+
     # Saved after the run, whether it passed or not: what the store and the
     # memos hold is checked when it is read, so a failed run's is as good to
     # start from. A key the restore already found is left as it is.
